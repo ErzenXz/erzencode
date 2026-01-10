@@ -1,0 +1,29 @@
+# Source files (dist is published)
+src/
+*.ts
+!*.d.ts
+
+# Config files
+tsconfig.json
+vite.config.ts
+tailwind.config.cjs
+postcss.config.cjs
+
+# Dev files
+.github/
+.gitignore
+.env*
+providers.example.json
+providers.json
+
+# IDE
+.idea/
+.vscode/
+.claude/
+
+# Images (if not needed at runtime)
+images/
+
+# OS files
+.DS_Store
+Thumbs.db
