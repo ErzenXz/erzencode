@@ -22,8 +22,18 @@ import {
   getAllTools,
   setWorkspaceRoot,
   setSubagentTool,
+  setSubagentExecutor,
+  isSemanticSearchAvailable,
 } from "./tools-standalone.js";
+import { hasIndex, getIndexStats } from "./indexer/index.js";
 import { subagentToolDefinition } from "./subagents.js";
+import {
+  SYSTEM_PROMPT,
+  ASK_MODE_PROMPT,
+  PLAN_MODE_PROMPT,
+  MEMORY_FILE_NAMES,
+  SUBAGENT_PROMPTS,
+} from "./prompts.js";
 
 // ============================================================================
 // Types
@@ -46,7 +56,12 @@ export interface AgentConfig {
 
 export interface AgentMessage {
   role: "user" | "assistant" | "system";
-  content: string;
+  /**
+   * Message content can be plain text or multimodal parts (e.g. vision).
+   * We intentionally keep this broad because the Vercel AI SDK supports
+   * structured content arrays for images.
+   */
+  content: unknown;
 }
 
 export interface StreamEvent {
@@ -81,8 +96,64 @@ interface EnvironmentContext {
   homeDirectory: string;
   shell: string;
   nodeVersion: string;
+  // Semantic search index status
+  hasSemanticIndex: boolean;
+  indexedChunks?: number;
+  indexedFiles?: number;
 }
 
+async function getEnvironmentContextAsync(workspaceRoot: string): Promise<EnvironmentContext> {
+  const ctx: EnvironmentContext = {
+    workingDirectory: workspaceRoot,
+    isGitRepo: false,
+    platform: process.platform,
+    timestamp: new Date().toISOString(),
+    homeDirectory: os.homedir(),
+    shell: process.env.SHELL || "unknown",
+    nodeVersion: process.version,
+    hasSemanticIndex: false,
+  };
+
+  // Check if git repo
+  try {
+    const gitDir = path.join(workspaceRoot, ".git");
+    if (fs.existsSync(gitDir)) {
+      ctx.isGitRepo = true;
+      // Get current branch
+      try {
+        const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+          cwd: workspaceRoot,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+        ctx.gitBranch = branch;
+      } catch {
+        // Ignore git errors
+      }
+    }
+  } catch {
+    // Not a git repo
+  }
+
+  // Check if codebase is indexed for semantic search
+  try {
+    const indexed = await hasIndex(workspaceRoot);
+    if (indexed) {
+      const stats = await getIndexStats(workspaceRoot);
+      ctx.hasSemanticIndex = stats.exists && stats.totalChunks > 0;
+      if (ctx.hasSemanticIndex) {
+        ctx.indexedChunks = stats.totalChunks;
+        ctx.indexedFiles = stats.totalFiles;
+      }
+    }
+  } catch {
+    // Ignore index check errors
+  }
+
+  return ctx;
+}
+
+// Sync version for backwards compatibility (no index check)
 function getEnvironmentContext(workspaceRoot: string): EnvironmentContext {
   const ctx: EnvironmentContext = {
     workingDirectory: workspaceRoot,
@@ -92,6 +163,7 @@ function getEnvironmentContext(workspaceRoot: string): EnvironmentContext {
     homeDirectory: os.homedir(),
     shell: process.env.SHELL || "unknown",
     nodeVersion: process.version,
+    hasSemanticIndex: false,
   };
 
   // Check if git repo
@@ -119,21 +191,8 @@ function getEnvironmentContext(workspaceRoot: string): EnvironmentContext {
 }
 
 // ============================================================================
-// Memory Files Loader (AGENTS.md, CLAUDE.md, etc.)
+// Memory Files Loader
 // ============================================================================
-
-const MEMORY_FILE_NAMES = [
-  "AGENTS.md",
-  "AGENT.md",
-  "CLAUDE.md",
-  "AI.md",
-  "CURSOR.md",
-  "INSTRUCTIONS.md",
-  ".cursorrules",
-  ".github/copilot-instructions.md",
-  "docs/AGENTS.md",
-  "docs/CLAUDE.md",
-];
 
 interface MemoryFile {
   path: string;
@@ -163,99 +222,7 @@ function loadMemoryFiles(workspaceRoot: string): MemoryFile[] {
   return files;
 }
 
-// ============================================================================
-// System Prompts
-// ============================================================================
-
-const SYSTEM_PROMPT_TEMPLATE = `You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
-
-IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming.
-
-# Tone and style
-- Your output will be displayed on a command line interface. Your responses should be short and concise.
-- You can use Github-flavored markdown for formatting, rendered in a monospace font.
-- Output text to communicate with the user; all text you output outside of tool use is displayed to the user.
-- Only use tools to complete tasks. Never use tools like Bash or code comments as means to communicate with the user.
-- NEVER create files unless absolutely necessary. ALWAYS prefer editing an existing file to creating a new one.
-- Only use emojis if the user explicitly requests it.
-
-# Professional objectivity
-Prioritize technical accuracy and truthfulness over validating the user's beliefs. Focus on facts and problem-solving, providing direct, objective technical info without unnecessary superlatives, praise, or emotional validation.
-
-# Tool usage policy
-- You can call multiple tools in a single response. If tools are independent, make all calls in parallel.
-- If tool calls depend on previous calls, call them sequentially.
-- Use specialized tools instead of bash commands when possible:
-  - Read for reading files (NOT cat/head/tail)
-  - Edit for editing files (NOT sed/awk)
-  - Write for creating files (NOT echo/cat)
-  - Glob for finding files (NOT find/ls)
-  - Grep for searching content (NOT grep/rg)
-- Reserve Bash for actual system commands and terminal operations.
-- NEVER use bash echo to communicate with the user.
-
-# Making code changes
-1. Before editing, ALWAYS use the Read tool to understand the file content
-2. Use the Edit tool with oldString/newString for surgical edits
-3. The edit will FAIL if oldString is not found or found multiple times - provide more context
-4. When editing, preserve exact indentation (content after the tab in line numbers)
-5. After editing, verify the changes look correct - check the diff stats (+X -Y lines)
-
-# Searching the codebase
-- Use Glob to find files by patterns (e.g., "**/*.ts", "src/**/*.tsx")
-- Use Grep to search file contents with regex
-- Results are sorted by modification time
-
-# Running commands
-- Use Bash with workdir parameter instead of cd commands
-- For long-running commands, use run_in_background: true
-- Default timeout is 2 minutes, max is 10 minutes
-
-# Git operations
-- Only create commits when requested by the user
-- NEVER update git config
-- NEVER run destructive git commands (push --force, reset --hard) unless explicitly requested
-- NEVER skip hooks unless requested
-
-# Task Management
-Use TodoWrite VERY frequently to track progress. Mark todos as completed IMMEDIATELY when done.
-
-# Code References
-When referencing code, include file_path:line_number pattern for easy navigation.
-
-# Critical Requirements
-
-1. **Code must be immediately runnable**
-   - Include all imports at the top
-   - Add dependencies to package.json/requirements.txt
-   - Ensure all endpoints are configured
-
-2. **When editing**
-   - Read the file first (REQUIRED)
-   - Match indentation exactly
-   - Provide enough context for unique matches
-   - Don't include line numbers in oldString/newString
-   - Verify edit succeeded by checking diff stats
-
-3. **Communication**
-   - Keep responses SHORT
-   - Use markdown formatting
-   - No emojis unless requested
-   - Direct answers without fluff
-
-Remember: You're a coding agent, not a conversation partner. Be helpful, precise, and efficient.`;
-
-const ASK_MODE_PROMPT = `
-
-## Mode: Ask (Read-Only)
-
-You can read files and search code, but you CANNOT modify files or execute destructive commands.`;
-
-const PLAN_MODE_PROMPT = `
-
-## Mode: Plan
-
-You are in Planning Mode. Analyze problems, create implementation plans, but do NOT modify files.`;
+// System prompts imported from ./prompts.js
 
 // ============================================================================
 // Tool Selection - Filter tools based on mode
@@ -272,10 +239,13 @@ function selectToolsForMode(mode: AgentMode): Record<string, Tool<any, any>> {
     "grep",
     "glob",
     "todoread",
+    "semantic_search",
+    "index_status",
   ]);
 
   if (mode === "plan") {
     readOnlyToolNames.add("todowrite");
+    readOnlyToolNames.add("question"); // Allow questions in plan mode
   }
 
   const filtered: Record<string, Tool<any, any>> = {};
@@ -296,6 +266,7 @@ export class AIAgent {
   private tools: Record<string, Tool<any, any>>;
   private systemPrompt: string;
   private abortController: AbortController | null = null;
+  private initialized: boolean = false;
 
   constructor(config: AgentConfig) {
     this.config = {
@@ -315,11 +286,135 @@ export class AIAgent {
     // Register subagent tool for agent mode
     if (this.config.mode === "agent") {
       setSubagentTool(subagentToolDefinition);
+
+      setSubagentExecutor(async (prompt: string, type: string) => {
+        const allTools = getAllTools();
+
+        const toolNamesByType: Record<string, string[]> = {
+          explore: ["read", "list", "grep", "glob", "todoread", "semantic_search", "index_status"],
+          research: ["webfetch", "exa_web_search", "exa_code_search"],
+        };
+
+        const selectedToolNames =
+          toolNamesByType[type] ??
+          Object.keys(allTools).filter((name) => name !== "task");
+
+        const subagentTools: Record<string, Tool<any, any>> = {};
+        for (const name of selectedToolNames) {
+          if (allTools[name]) subagentTools[name] = allTools[name]!;
+        }
+
+        const baseModel = createProvider({
+          provider: this.config.provider,
+          model: this.config.model,
+          apiKey: this.config.apiKey,
+          baseUrl: this.config.baseUrl,
+        });
+
+        const providerOptions = getProviderOptions(
+          this.config.provider,
+          this.config.model,
+          this.config.thinking,
+        );
+
+        const agent = new ToolLoopAgent({
+          model: baseModel as any,
+          instructions:
+            type === "explore"
+              ? SUBAGENT_PROMPTS.explore
+              : type === "research"
+                ? SUBAGENT_PROMPTS.research
+                : SUBAGENT_PROMPTS.general,
+          tools: subagentTools,
+          id: `subagent-${type}`,
+          stopWhen: stepCountIs(25),
+          callOptionsSchema: z.object({}),
+          prepareCall: ({ ...settings }: any) => ({
+            ...settings,
+            temperature: 0.3,
+            maxOutputTokens: 4096,
+            providerOptions,
+          }),
+        });
+
+        const result = await agent.stream({
+          messages: [{ role: "user", content: prompt }],
+          options: {},
+        } as any);
+
+        let output = "";
+        // Collect tool calls to return as structured data
+        const toolCalls: Array<{
+          id: string;
+          name: string;
+          args?: Record<string, unknown>;
+          output?: string;
+          status: "done" | "error";
+        }> = [];
+        const pendingTools = new Map<string, { name: string; args?: Record<string, unknown> }>();
+
+        for await (const part of result.fullStream) {
+          if (part.type === "text-delta") {
+            output += part.text;
+          } else if (part.type === "tool-call") {
+            const toolCall = part as { toolCallId: string; toolName: string; input?: Record<string, unknown> };
+            pendingTools.set(toolCall.toolCallId, {
+              name: toolCall.toolName,
+              args: toolCall.input,
+            });
+          } else if (part.type === "tool-result") {
+            const toolResult = part as { toolCallId: string; toolName: string; output?: unknown };
+            const pending = pendingTools.get(toolResult.toolCallId);
+            toolCalls.push({
+              id: toolResult.toolCallId,
+              name: toolResult.toolName || pending?.name || "unknown",
+              args: pending?.args,
+              output: typeof toolResult.output === "string" ? toolResult.output : JSON.stringify(toolResult.output),
+              status: "done",
+            });
+            pendingTools.delete(toolResult.toolCallId);
+          } else if (part.type === "tool-error") {
+            const toolError = part as { toolCallId: string; toolName?: string; error?: unknown };
+            const pending = pendingTools.get(toolError.toolCallId);
+            toolCalls.push({
+              id: toolError.toolCallId,
+              name: toolError.toolName || pending?.name || "unknown",
+              args: pending?.args,
+              output: typeof toolError.error === "string" ? toolError.error : JSON.stringify(toolError.error),
+              status: "error",
+            });
+            pendingTools.delete(toolError.toolCallId);
+          }
+        }
+
+        // Return structured JSON with tools and text output
+        return JSON.stringify({
+          result: output.trim(),
+          tools: toolCalls,
+        });
+      });
     }
 
     // Tools are already in AI SDK v6 format from getAllTools()
     this.tools = selectToolsForMode(this.config.mode!);
+    // Initialize with sync version, will be updated async
     this.systemPrompt = this.buildSystemPrompt(workspaceRoot);
+  }
+
+  /**
+   * Initialize the agent with async operations (index detection).
+   * Call this before using stream() for best results.
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    
+    const workspaceRoot = this.config.workspaceRoot || process.cwd();
+    const env = await getEnvironmentContextAsync(workspaceRoot);
+    const memoryFiles = loadMemoryFiles(workspaceRoot);
+    
+    // Rebuild prompt with async context
+    this.systemPrompt = this.buildSystemPromptWithEnv(env, memoryFiles);
+    this.initialized = true;
   }
 
   private buildSystemPrompt(workspaceRoot: string): string {
@@ -332,7 +427,7 @@ export class AIAgent {
     const memoryFiles = loadMemoryFiles(workspaceRoot);
 
     // Build the prompt
-    let prompt = SYSTEM_PROMPT_TEMPLATE;
+    let prompt = SYSTEM_PROMPT;
 
     // Add mode-specific instructions
     if (mode === "ask") prompt += ASK_MODE_PROMPT;
@@ -349,6 +444,51 @@ export class AIAgent {
   Today's date: ${new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })}
   Shell: ${env.shell}
   Node: ${env.nodeVersion}
+  Semantic index: ${env.hasSemanticIndex ? `YES (${env.indexedFiles} files, ${env.indexedChunks} chunks) - USE semantic_search for code exploration!` : "not available"}
+</env>`;
+
+    // Add memory files if found
+    if (memoryFiles.length > 0) {
+      prompt += `
+
+# Project Instructions
+
+The following instruction files were found in the project. Follow these guidelines:
+`;
+      for (const file of memoryFiles) {
+        prompt += `
+<file path="${file.path}">
+${file.content}
+</file>
+`;
+      }
+    }
+
+    return prompt;
+  }
+
+  private buildSystemPromptWithEnv(env: EnvironmentContext, memoryFiles: MemoryFile[]): string {
+    const mode = this.config.mode || "agent";
+
+    // Build the prompt
+    let prompt = SYSTEM_PROMPT;
+
+    // Add mode-specific instructions
+    if (mode === "ask") prompt += ASK_MODE_PROMPT;
+    else if (mode === "plan") prompt += PLAN_MODE_PROMPT;
+
+    // Add environment context
+    prompt += `
+
+# Environment
+<env>
+  Working directory: ${env.workingDirectory}
+  Is directory a git repo: ${env.isGitRepo ? "yes" : "no"}${env.gitBranch ? `\n  Current branch: ${env.gitBranch}` : ""}
+  Platform: ${env.platform}
+  Today's date: ${new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })}
+  Shell: ${env.shell}
+  Node: ${env.nodeVersion}
+  Semantic index: ${env.hasSemanticIndex ? `YES (${env.indexedFiles} files, ${env.indexedChunks} chunks) - USE semantic_search for code exploration!` : "not available"}
 </env>`;
 
     // Add memory files if found
@@ -375,6 +515,19 @@ ${file.content}
    * Stream responses from the AI agent
    */
   async *stream(messages: AgentMessage[]): AsyncGenerator<StreamEvent> {
+    // Always refresh environment context so the agent sees current index status
+    // (e.g. after auto-indexing or file edits).
+    try {
+      const workspaceRoot = this.config.workspaceRoot || process.cwd();
+      const env = await getEnvironmentContextAsync(workspaceRoot);
+      const memoryFiles = loadMemoryFiles(workspaceRoot);
+      this.systemPrompt = this.buildSystemPromptWithEnv(env, memoryFiles);
+      this.initialized = true;
+    } catch {
+      // Fall back to existing prompt
+      if (!this.initialized) await this.initialize();
+    }
+
     // Validate config
     const validation = validateProviderConfig({
       provider: this.config.provider,
@@ -396,7 +549,7 @@ ${file.content}
       // Convert messages to ModelMessage format
       const coreMessages: any[] = messages.map((m) => ({
         role: m.role as "user" | "assistant" | "system",
-        content: m.content,
+        content: m.content as any,
       }));
 
       const baseModel = createProvider({
@@ -795,6 +948,16 @@ ${file.content}
 
 export function createAIAgent(config: AgentConfig): AIAgent {
   return new AIAgent(config);
+}
+
+/**
+ * Create and initialize an AI agent with full async setup.
+ * This includes semantic index detection.
+ */
+export async function createAIAgentAsync(config: AgentConfig): Promise<AIAgent> {
+  const agent = new AIAgent(config);
+  await agent.initialize();
+  return agent;
 }
 
 export { checkModelThinking as modelSupportsThinking };

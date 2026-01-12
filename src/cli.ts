@@ -5,6 +5,9 @@
  * A modern command-line interface for AI-powered coding assistance
  */
 
+// IMPORTANT: must run before importing AI SDK / providers to suppress warning spam
+import "./bootstrap.js";
+
 import { Command } from "commander";
 import chalk from "chalk";
 import * as readline from "readline";
@@ -15,6 +18,33 @@ import path from "path";
 import inquirer from "inquirer";
 import { renderMarkdown } from "./markdown.js";
 import { runErzenCodeUI } from "./ui/index.js";
+import { startWebUI } from "./web-ui-new.js";
+import {
+  initCharm,
+  theme,
+  colored,
+  bold,
+  dim,
+  box,
+  table,
+  list,
+  kvTable,
+  statusBadge,
+  progressBar,
+  divider,
+  sectionDivider,
+  header,
+  alert,
+  keyValue,
+  gradientText,
+} from "./components/charm-tui.js";
+import {
+  renderWelcomeBanner,
+  renderHelp,
+  renderError,
+  renderSuccess,
+  renderWarning,
+} from "./components/TerminalRenderer.js";
 import {
   DEFAULT_MODELS,
   MODEL_CHOICES,
@@ -38,12 +68,6 @@ import {
 } from "./config.js";
 
 const VERSION = "0.2.0";
-
-const MODE_COLOR = {
-  plan: chalk.hex("#f59e0b"),
-  agent: chalk.blue,
-  ask: chalk.green,
-} as const;
 
 const program = new Command();
 
@@ -71,6 +95,11 @@ program
     "--select-model",
     "Prompt to select provider/model before chat",
     false,
+  )
+  .option(
+    "--web",
+    "Launch web UI instead of terminal UI",
+    false,
   );
 
 // ============================================================================
@@ -90,11 +119,15 @@ program
   .option("--allow-unknown-models", "Allow custom/unknown model IDs", false)
   .option("-v, --verbose", "Show detailed output", false)
   .action(async (task: string, options) => {
+    await initCharm();
     const agentConfig = await buildAgentConfig({
       ...program.opts(),
       ...options,
     });
-    if (!agentConfig) process.exit(1);
+    if (!agentConfig) {
+      console.error(alert("Configuration error. Run 'erzencode init' to set up.", "error"));
+      process.exit(1);
+    }
 
     const agent = createAIAgent(agentConfig as any);
     try {
@@ -106,13 +139,22 @@ program
           const text = (event.data as any).text ?? "";
           process.stdout.write(text);
           response += text;
+        } else if (event.type === "tool-call") {
+          const data = event.data as any;
+          process.stdout.write(
+            `\n${statusBadge("running", "Running")} ${colored(data.toolName, theme.cyan)}\n`,
+          );
+        } else if (event.type === "tool-result") {
+          const data = event.data as any;
+          const status = data.isError ? "error" : "success";
+          process.stdout.write(`   ${statusBadge(status)} ${dim(data.toolName)}\n`);
         } else if (event.type === "error") {
-          console.error(chalk.red("\nError:"), (event.data as any).error);
+          console.error("\n" + alert((event.data as any).error, "error"));
         }
       }
       console.log();
-    } catch (error) {
-      console.error(chalk.red("Error:"), error);
+    } catch (error: any) {
+      console.error("\n" + alert(`Error: ${error.message || error}`, "error"));
       process.exit(1);
     }
   });
@@ -152,34 +194,39 @@ program
   .command("config")
   .description("Show current configuration")
   .action(async () => {
+    await initCharm();
     const configPath = resolveConfigPath(program.opts());
     const config = await loadConfig(configPath);
 
-    console.log(chalk.cyan("\nErzencode Configuration\n"));
-    console.log(chalk.gray(`Config path: ${configPath}`));
-    console.log(chalk.gray(`Config dir:  ${getConfigDir()}\n`));
+    console.log("\n" + header("Erzencode Configuration"));
+    console.log(dim(`  Config path: ${configPath}`));
+    console.log(dim(`  Config dir:  ${getConfigDir()}`));
+    console.log("");
 
     if (config) {
-      console.log(`Provider:    ${chalk.yellow(config.provider ?? "openai")}`);
-      console.log(
-        `Model:       ${chalk.green(config.model ?? DEFAULT_MODELS.openai)}`,
-      );
-      const modeValue = (config.mode ?? "agent") as keyof typeof MODE_COLOR;
-      const modeColor = MODE_COLOR[modeValue] ?? chalk.gray;
-      console.log(`Mode:        ${modeColor(config.mode ?? "agent")}`);
-      console.log(
-        `Thinking:    ${chalk.magenta(config.thinkingLevel ?? "off")}`,
-      );
-      console.log(`Renderer:    ${config.renderer ?? "markdown"}`);
+      const modeColors: Record<string, string> = {
+        plan: theme.warning,
+        agent: theme.info,
+        ask: theme.success,
+      };
+      const modeValue = config.mode ?? "agent";
+      const modeColor = modeColors[modeValue] ?? theme.textMuted;
+
+      const configData = [
+        ["Provider", colored(config.provider ?? "openai", theme.yellow)],
+        ["Model", colored(config.model ?? DEFAULT_MODELS.openai, theme.green)],
+        ["Mode", colored(modeValue, modeColor)],
+        ["Thinking", colored(config.thinkingLevel ?? "off", theme.magenta)],
+        ["Renderer", config.renderer ?? "markdown"],
+      ];
+
       if (config.workspaceRoot) {
-        console.log(`Workspace:   ${config.workspaceRoot}`);
+        configData.push(["Workspace", dim(config.workspaceRoot)]);
       }
+
+      console.log(table(["Setting", "Value"], configData));
     } else {
-      console.log(
-        chalk.yellow(
-          'No configuration found. Run "erzencode init" to create one.',
-        ),
-      );
+      console.log(await renderWarning('No configuration found. Run "erzencode init" to create one.'));
     }
     console.log("");
   });
@@ -188,26 +235,25 @@ program
   .command("models [provider]")
   .description("List available models for a provider")
   .action(async (providerArg?: string) => {
+    await initCharm();
     const configPath = resolveConfigPath(program.opts());
     const config = await loadConfig(configPath);
     const provider = (providerArg ??
       config?.provider ??
       "openai") as ProviderType;
 
-    console.log(
-      chalk.cyan(
-        `\nModels for ${PROVIDERS.find((p) => p.id === provider)?.name ?? provider}\n`,
-      ),
-    );
+    const providerName = PROVIDERS.find((p) => p.id === provider)?.name ?? provider;
+    console.log("\n" + sectionDivider(`Models for ${providerName}`, 50));
+    console.log("");
 
     // Try to fetch dynamic models first
     const apiKey = getApiKey(provider);
     if (apiKey) {
       try {
-        console.log(chalk.gray("Fetching models from API..."));
+        console.log(dim("  Fetching models from API..."));
         const models = await fetchProviderModels(provider, apiKey);
         if (models.length > 0) {
-          models.forEach((m) => console.log(`  ${chalk.green(m)}`));
+          console.log(list(models, { style: "arrow", color: theme.green }));
           console.log("");
           return;
         }
@@ -219,13 +265,9 @@ program
     // Static list
     const staticModels = MODEL_CHOICES[provider] ?? [];
     if (staticModels.length > 0) {
-      staticModels.forEach((m) => console.log(`  ${chalk.green(m)}`));
+      console.log(list(staticModels, { style: "arrow", color: theme.green }));
     } else {
-      console.log(
-        chalk.yellow(
-          "  No preset models available. Use --allow-unknown-models with any model ID.",
-        ),
-      );
+      console.log(await renderWarning("No preset models available. Use --allow-unknown-models with any model ID."));
     }
     console.log("");
   });
@@ -233,14 +275,22 @@ program
 program
   .command("providers")
   .description("List available providers")
-  .action(() => {
-    console.log(chalk.cyan("\nAvailable Providers\n"));
-    PROVIDERS.forEach((p) => {
+  .action(async () => {
+    await initCharm();
+    console.log("\n" + sectionDivider("Available Providers", 50));
+    console.log("");
+
+    const providerRows = PROVIDERS.map((p) => {
       const hasKey = getApiKey(p.id);
-      const status = hasKey ? chalk.green("\u2713") : chalk.gray("\u2717");
-      console.log(`  ${status} ${chalk.yellow(p.id.padEnd(12))} ${p.name}`);
+      const status = hasKey 
+        ? statusBadge("success", "Ready") 
+        : statusBadge("pending", "No Key");
+      return [colored(p.id, theme.yellow), p.name, status];
     });
-    console.log(chalk.gray("\n\u2713 = API key found in environment\n"));
+
+    console.log(table(["ID", "Provider", "Status"], providerRows));
+    console.log(dim("\n  ✓ Ready = API key found in environment"));
+    console.log("");
   });
 
 // Default command - start Ink UI
@@ -423,12 +473,65 @@ async function promptForProviderModel(
   return { provider: selectedProvider, model: selectedModel };
 }
 
+async function startWebUIMode(options: any, loadedConfig: ErzencodeConfig): Promise<void> {
+  const provider = (loadedConfig.provider ?? "anthropic") as ProviderType;
+  const model = loadedConfig.model ?? DEFAULT_MODELS[provider] ?? "claude-sonnet-4-20250514";
+  const workspaceRoot = options.cwd ?? process.env.AI_INFRA_WORKSPACE_ROOT ?? process.env.INIT_CWD ?? process.cwd();
+  const mode = (loadedConfig.mode ?? "agent") as "agent" | "ask" | "plan";
+  const supportsThinking = modelSupportsThinking(provider, model);
+  const thinking = resolveThinkingConfig(
+    (options.thinking ?? loadedConfig.thinkingLevel ?? "off") as ThinkingLevel,
+    supportsThinking,
+  );
+
+  const baseConfig = {
+    provider,
+    model,
+    mode,
+    workspaceRoot,
+    renderer: "markdown" as const,
+    thinking,
+    allowUnknownModels: true,
+  };
+
+  await initCharm();
+  console.log(gradientText("🌐 Starting Web UI...", "primary"));
+  console.log("");
+
+  const server = await startWebUI({
+    baseConfig,
+    initialWorkspaceRoot: workspaceRoot,
+    provider,
+    model,
+    mode,
+    uiMode: "web",
+    openBrowser: true,
+  });
+
+  console.log(colored(`✓ Web UI running at ${server.url}`, "success"));
+  console.log(dim("Press Ctrl+C to stop"));
+  console.log("");
+
+  // Keep process alive
+  process.on("SIGINT", async () => {
+    console.log("\n" + colored("Shutting down...", "info"));
+    await server.close();
+    process.exit(0);
+  });
+}
+
 async function startInkUI(options: any): Promise<void> {
   // Ensure config directories exist
   await ensureConfigDirs();
 
   const configPath = resolveConfigPath(options);
   const loadedConfig = await ensureConfig(configPath);
+
+  // Check if web UI mode is requested
+  if (options.web) {
+    await startWebUIMode(options, loadedConfig);
+    return;
+  }
 
   // Only show setup if:
   // 1. --select-model flag is passed
@@ -479,13 +582,6 @@ async function startInkUI(options: any): Promise<void> {
   }
 
   // Config is complete - go straight to chat without setup screens
-  console.log(chalk.cyan(`\n✓ Config loaded from ${configPath}`));
-  console.log(
-    chalk.gray(
-      `  Provider: ${loadedConfig.provider} | Model: ${loadedConfig.model}\n`,
-    ),
-  );
-
   const baseConfig = await buildAgentConfig({ ...options, noPrompt: true });
 
   // If API key is missing, show setup flow instead of erroring
@@ -538,12 +634,15 @@ async function startInkUI(options: any): Promise<void> {
 }
 
 async function runInitWizard(options: any): Promise<void> {
+  await initCharm();
   await ensureConfigDirs();
 
   const configPath = resolveConfigPath(options);
   const existing = await loadConfig(configPath);
 
-  console.log(chalk.cyan("\nErzencode Configuration Wizard\n"));
+  console.log("\n" + gradientText("✨ Erzencode Configuration Wizard", "primary"));
+  console.log(divider(40));
+  console.log("");
 
   const answers = await inquirer.prompt([
     {
@@ -598,7 +697,8 @@ async function runInitWizard(options: any): Promise<void> {
   };
 
   await saveConfig(configPath, nextConfig);
-  console.log(chalk.green(`\n\u2713 Config saved to ${configPath}\n`));
+  console.log("\n" + alert(`Config saved to ${configPath}`, "success"));
+  console.log("");
 }
 
 async function startLegacyChat(
@@ -607,15 +707,16 @@ async function startLegacyChat(
 ): Promise<void> {
   if (!agentConfig) return;
 
-  console.log(chalk.blue("\n\u{1F916} Erzencode (Legacy Chat Mode)"));
-  console.log(
-    chalk.gray("Type your tasks. Commands: exit, clear, reset, help\n"),
-  );
-  console.log(
-    chalk.gray(
-      `Provider: ${agentConfig.provider} | Model: ${agentConfig.model}\n`,
-    ),
-  );
+  await initCharm();
+
+  console.log("\n" + await renderWelcomeBanner("Erzencode", VERSION, "Legacy Chat Mode"));
+  console.log("");
+  console.log(box(
+    keyValue("Provider", colored(agentConfig.provider, theme.yellow)) + "  " +
+    keyValue("Model", colored(agentConfig.model, theme.green)),
+    { borderStyle: "round", padding: { top: 0, right: 1, bottom: 0, left: 1 } }
+  ));
+  console.log(dim("  Type your tasks. Commands: exit, clear, reset, help\n"));
 
   const agent = createAIAgent(agentConfig as any);
 
@@ -631,7 +732,7 @@ async function startLegacyChat(
   });
 
   const chat = async (): Promise<void> => {
-    rl.question(chalk.cyan("\nYou: "), async (input) => {
+    rl.question(colored("\n❯ ", theme.primary), async (input) => {
       const task = input.trim();
 
       if (!task) {
@@ -640,32 +741,32 @@ async function startLegacyChat(
       }
 
       if (task.toLowerCase() === "exit" || task.toLowerCase() === "quit") {
-        console.log(chalk.blue("\nGoodbye! \u{1F44B}\n"));
+        console.log("\n" + alert("Goodbye! 👋", "info"));
         rl.close();
         process.exit(0);
       }
 
       if (task.toLowerCase() === "clear") {
         console.clear();
-        console.log(chalk.blue("\n\u{1F916} Erzencode\n"));
+        console.log("\n" + bold("🤖 Erzencode", theme.primary) + "\n");
         chat();
         return;
       }
 
       if (task.toLowerCase() === "reset") {
         messages = [];
-        console.log(chalk.yellow("\n\u{1F9F9} Conversation reset.\n"));
+        console.log("\n" + alert("Conversation reset.", "warning"));
         chat();
         return;
       }
 
       if (task.toLowerCase() === "help") {
-        showLegacyHelp();
+        await showLegacyHelp();
         chat();
         return;
       }
 
-      console.log(chalk.green("\nAssistant: "));
+      console.log("\n" + bold("Assistant", theme.success) + "\n");
 
       try {
         messages.push({ role: "user", content: task });
@@ -679,19 +780,19 @@ async function startLegacyChat(
             finalResponse += chunk;
           } else if (event.type === "reasoning") {
             const text = (event.data as any).text ?? "";
-            if (text) process.stdout.write(chalk.gray(`\n💭 ${text}\n`));
+            if (text) process.stdout.write(colored(`\n💭 ${text}\n`, theme.magenta));
           } else if (event.type === "tool-call") {
             const data = event.data as any;
             process.stdout.write(
-              chalk.gray(`\n\u{1F527} Running: ${data.toolName}\n`),
+              `\n${statusBadge("running", "Running")} ${colored(data.toolName, theme.cyan)}\n`,
             );
           } else if (event.type === "tool-result") {
             const data = event.data as any;
-            const icon = data.isError ? "\u274C" : "\u2713";
-            process.stdout.write(chalk.gray(`   ${icon} ${data.toolName}\n`));
+            const status = data.isError ? "error" : "success";
+            process.stdout.write(`   ${statusBadge(status)} ${dim(data.toolName)}\n`);
           } else if (event.type === "error") {
             const error = (event.data as any).error ?? "Unknown error";
-            console.error(chalk.red(`\nError: ${error}`));
+            console.error("\n" + alert(`Error: ${error}`, "error"));
           }
         }
 
@@ -702,7 +803,7 @@ async function startLegacyChat(
           }
         }
       } catch (error: any) {
-        console.error(chalk.red("\n\u274C Error:"), error.message || error);
+        console.error("\n" + alert(`Error: ${error.message || error}`, "error"));
       }
 
       chat();
@@ -710,30 +811,35 @@ async function startLegacyChat(
   };
 
   rl.on("close", () => {
-    console.log(chalk.blue("\nGoodbye! \u{1F44B}\n"));
+    console.log("\n" + alert("Goodbye! 👋", "info"));
     process.exit(0);
   });
 
   chat();
 }
 
-function showLegacyHelp(): void {
-  console.log(chalk.cyan("\nAvailable commands:"));
-  console.log(chalk.gray("  exit, quit  - Exit the chat"));
-  console.log(chalk.gray("  clear       - Clear the screen"));
-  console.log(chalk.gray("  reset       - Reset conversation memory"));
-  console.log(chalk.gray("  help        - Show this help message"));
-  console.log(chalk.gray("\nExample tasks:"));
-  console.log(
-    chalk.gray('  - "Read package.json and explain what this project does"'),
-  );
-  console.log(
-    chalk.gray(
-      '  - "Create a new TypeScript file with a hello world function"',
-    ),
-  );
-  console.log(chalk.gray('  - "Find all TODO comments in the codebase"'));
-  console.log(chalk.gray('  - "Run the tests and fix any failures"'));
+async function showLegacyHelp(): Promise<void> {
+  console.log("\n" + sectionDivider("Help", 40));
+  console.log("");
+
+  const commands = [
+    { command: "exit, quit", description: "Exit the chat" },
+    { command: "clear", description: "Clear the screen" },
+    { command: "reset", description: "Reset conversation memory" },
+    { command: "help", description: "Show this help message" },
+  ];
+
+  console.log(await renderHelp(commands));
+  console.log("");
+
+  console.log(bold("Example Tasks", theme.cyan));
+  const examples = [
+    '"Read package.json and explain what this project does"',
+    '"Create a new TypeScript file with a hello world function"',
+    '"Find all TODO comments in the codebase"',
+    '"Run the tests and fix any failures"',
+  ];
+  console.log(list(examples, { style: "arrow", color: theme.textMuted }));
   console.log("");
 }
 

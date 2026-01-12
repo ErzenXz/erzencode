@@ -12,6 +12,17 @@ import * as os from "os";
 import { createHash } from "crypto";
 import { z } from "zod";
 import { tool, type Tool } from "ai";
+import {
+  searchCodebase,
+  hasIndex,
+  getIndexStats,
+  CodebaseIndexer,
+  loadProjectConfig,
+  type SearchResult,
+  type SearchOptions,
+  type IndexStats,
+} from "./indexer/index.js";
+import { getApiKeyAsync } from "./config.js";
 
 const execAsync = promisify(exec);
 
@@ -67,6 +78,81 @@ async function hasRipgrep(): Promise<boolean> {
     rgAvailable = false;
   }
   return rgAvailable;
+}
+
+// ============================================================================
+// Question/User Input State Management
+// ============================================================================
+
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface QuestionRequest {
+  id: string;
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple: boolean;
+  createdAt: number;
+}
+
+export interface QuestionResponse {
+  id: string;
+  answers: string[];
+  customText?: string;
+  answeredAt: number;
+}
+
+const pendingQuestions = new Map<string, QuestionRequest>();
+const questionResponses = new Map<string, QuestionResponse>();
+let questionCounter = 0;
+
+export function getPendingQuestions(): QuestionRequest[] {
+  return Array.from(pendingQuestions.values()).sort(
+    (a, b) => b.createdAt - a.createdAt,
+  );
+}
+
+export function answerQuestion(
+  questionId: string,
+  answers: string[],
+  customText?: string,
+): { ok: boolean; reason?: string } {
+  const pending = pendingQuestions.get(questionId);
+  if (!pending) {
+    return { ok: false, reason: "Unknown question id" };
+  }
+
+  questionResponses.set(questionId, {
+    id: questionId,
+    answers,
+    customText,
+    answeredAt: Date.now(),
+  });
+
+  pendingQuestions.delete(questionId);
+  return { ok: true };
+}
+
+export function cancelQuestion(
+  questionId: string,
+  reason?: string,
+): { ok: boolean; reason?: string } {
+  if (!pendingQuestions.has(questionId)) {
+    return { ok: false, reason: "Unknown question id" };
+  }
+
+  pendingQuestions.delete(questionId);
+  questionResponses.set(questionId, {
+    id: questionId,
+    answers: [],
+    customText: reason || "Cancelled by user",
+    answeredAt: Date.now(),
+  });
+
+  return { ok: true };
 }
 
 // ============================================================================
@@ -320,16 +406,31 @@ async function exaRequest(
 // ============================================================================
 
 export const readTool = tool({
-  description: `Reads a file from the local filesystem.
+  description: `Reads a file from the local filesystem. You can access any file directly by using this tool.
 
-Usage:
-- The filePath parameter must be an absolute path, not a relative path
-- By default, it reads up to 2000 lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files)
-- Any lines longer than 2000 characters will be truncated
-- Results are returned using cat -n format, with line numbers starting at 1
-- You can read multiple files in parallel by making multiple read calls
-- If you read a file that exists but has empty contents you will receive a warning`,
+**CAPABILITIES:**
+- Read any file by absolute path
+- Reads up to 2000 lines by default (configurable with limit)
+- Returns content with line numbers (cat -n format)
+- Lines longer than 2000 chars are truncated
+- Can read image files
+
+**USAGE NOTES:**
+- The filePath parameter MUST be an absolute path, not a relative path
+- Use offset/limit for long files to read specific sections
+- Call multiple reads in parallel when reading multiple files
+- Always read a file BEFORE editing it (required)
+
+**WHEN TO USE:**
+- Reading specific file contents
+- Examining code before making edits
+- Reading configuration files
+- Viewing log files or data files
+
+**WHEN NOT TO USE:**
+- Finding files by name (use Glob instead)
+- Searching file contents (use Grep instead)
+- Exploring directory structure (use List instead)`,
   inputSchema: z.object({
     filePath: z.string().describe("The absolute path to the file to read"),
     offset: z
@@ -403,13 +504,28 @@ Usage:
 // ============================================================================
 
 export const writeTool = tool({
-  description: `Writes a file to the local filesystem.
+  description: `Writes content to a file on the local filesystem.
 
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path
-- If this is an existing file, you MUST use the Read tool first to read the file's contents
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required
-- NEVER proactively create documentation files (*.md) or README files unless explicitly requested`,
+**CAPABILITIES:**
+- Creates new files or overwrites existing ones
+- Automatically creates parent directories if they don't exist
+- Returns diff statistics for existing files (+X -Y lines)
+
+**CRITICAL RULES:**
+- If the file EXISTS, you MUST use Read tool first. This tool will fail otherwise.
+- ALWAYS prefer editing existing files (use Edit tool) over writing new ones
+- NEVER proactively create documentation files (*.md, README) unless explicitly requested
+- NEVER commit secrets or credentials to files
+
+**WHEN TO USE:**
+- Creating entirely new files
+- Regenerating a file from scratch
+- Writing files where Edit tool doesn't make sense
+
+**WHEN NOT TO USE:**
+- Making small changes to existing files (use Edit instead)
+- Adding/modifying specific sections (use Edit instead)
+- File hasn't been read yet (Read first!)`,
   inputSchema: z.object({
     filePath: z
       .string()
@@ -434,6 +550,7 @@ Usage:
 
       await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
       await fs.writeFile(resolvedPath, content, "utf-8");
+      scheduleAutoIndex();
 
       const bytes = Buffer.byteLength(content, "utf-8");
       const lines = content.split("\n").length;
@@ -450,31 +567,6 @@ Usage:
       const MAX_PATCH_LINES = 120;
 
       if (previousContent !== null && previousContent !== content) {
-        const changes = diff.diffLines(previousContent, content);
-
-        for (const change of changes) {
-          const chunkLines = change.value.split("\n");
-          if (chunkLines[chunkLines.length - 1] === "") chunkLines.pop();
-
-          if (change.added) {
-            linesAdded += chunkLines.length;
-            for (const line of chunkLines) {
-              if (diffLines.length < MAX_DIFF_LINES) {
-                diffLines.push(`+ ${line}`);
-              }
-            }
-          } else if (change.removed) {
-            linesRemoved += chunkLines.length;
-            for (const line of chunkLines) {
-              if (diffLines.length < MAX_DIFF_LINES) {
-                diffLines.push(`- ${line}`);
-              }
-            }
-          }
-        }
-
-        truncated = linesAdded + linesRemoved > MAX_DIFF_LINES;
-
         const rawPatch = diff.createTwoFilesPatch(
           `a/${fileName}`,
           `b/${fileName}`,
@@ -485,6 +577,26 @@ Usage:
           { context: 3 },
         );
         const patchLines = String(rawPatch ?? "").replace(/\r\n/g, "\n").split("\n");
+
+        // Compute stats from patch (count only real +/- lines, excluding headers)
+        for (const line of patchLines) {
+          if (line.startsWith("+++") || line.startsWith("---")) continue;
+          if (line.startsWith("+")) linesAdded += 1;
+          else if (line.startsWith("-")) linesRemoved += 1;
+        }
+
+        // Preview from patch in standard unified diff format
+        const previewLines: string[] = [];
+        for (const line of patchLines) {
+          // Skip the first two header lines but keep hunks
+          if (line.startsWith("---") || line.startsWith("+++")) continue;
+          if (!line) continue;
+          previewLines.push(line);
+          if (previewLines.length >= MAX_DIFF_LINES) break;
+        }
+        diffLines.push(...previewLines);
+        truncated = linesAdded + linesRemoved > MAX_DIFF_LINES;
+
         if (patchLines.length > MAX_PATCH_LINES) {
           patchTruncated = true;
           patch = patchLines.slice(0, MAX_PATCH_LINES).join("\n");
@@ -518,16 +630,36 @@ Usage:
 // ============================================================================
 
 export const editTool = tool({
-  description: `Performs exact string replacements in files.
+  description: `Performs exact string replacements in files. The surgical tool for precise code modifications.
 
-Usage:
-- You must use your Read tool at least once before editing. This tool will error if you attempt an edit without reading.
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces)
-- The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content.
-- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
-- The edit will FAIL if oldString is not found in the file
-- The edit will FAIL if oldString is found multiple times. Provide more context to make it unique or use replaceAll.
-- Use replaceAll for replacing and renaming strings across the file.`,
+**CAPABILITIES:**
+- Replace exact text matches in files
+- Supports replaceAll for multiple occurrences
+- Returns unified diff showing changes
+- Preserves file encoding and line endings
+
+**CRITICAL RULES:**
+1. You MUST Read the file FIRST. This tool fails without a prior read.
+2. oldString must match EXACTLY (including whitespace/indentation)
+3. oldString must be UNIQUE in the file (or use replaceAll: true)
+4. Line numbers from Read output have format: \`spaces + line_num + tab + content\`
+   - Only include the content AFTER the tab, not the line number prefix
+5. Preserve exact indentation from the file
+
+**HANDLING FAILURES:**
+- "oldString not found": The text doesn't exist exactly as specified. Re-read the file.
+- "found multiple times": Include more surrounding context to make it unique.
+
+**WHEN TO USE:**
+- Making targeted changes to specific code sections
+- Renaming variables/functions (with replaceAll: true)
+- Fixing bugs in specific locations
+- Adding/modifying imports, functions, or code blocks
+
+**WHEN NOT TO USE:**
+- Rewriting entire files (use Write instead)
+- File hasn't been read yet (Read first!)
+- Large-scale restructuring (consider multiple edits)`,
   inputSchema: z.object({
     filePath: z.string().describe("The absolute path to the file to modify"),
     oldString: z.string().describe("The text to replace"),
@@ -574,9 +706,9 @@ Usage:
       }
 
       await fs.writeFile(resolvedPath, newContent, "utf-8");
+      scheduleAutoIndex();
 
       // Calculate actual diff with line-by-line changes
-      const changes = diff.diffLines(content, newContent);
       let linesAdded = 0;
       let linesRemoved = 0;
       const diffLines: string[] = [];
@@ -586,29 +718,6 @@ Usage:
       let patch: string | undefined;
       let patchTruncated = false;
 
-      for (const change of changes) {
-        const lines = change.value.split("\n");
-        // Remove trailing empty line from split
-        if (lines[lines.length - 1] === "") lines.pop();
-
-        if (change.added) {
-          linesAdded += lines.length;
-          for (const line of lines) {
-            if (diffLines.length < MAX_DIFF_LINES) {
-              diffLines.push(`+ ${line}`);
-            }
-          }
-        } else if (change.removed) {
-          linesRemoved += lines.length;
-          for (const line of lines) {
-            if (diffLines.length < MAX_DIFF_LINES) {
-              diffLines.push(`- ${line}`);
-            }
-          }
-        }
-      }
-
-      const truncated = linesAdded + linesRemoved > MAX_DIFF_LINES;
       const replacedCount = replaceAll ? occurrences : 1;
       const fileName = path.basename(resolvedPath);
 
@@ -622,6 +731,23 @@ Usage:
         { context: 3 },
       );
       const patchLines = String(rawPatch ?? "").replace(/\r\n/g, "\n").split("\n");
+
+      // Compute stats from patch (count only real +/- lines, excluding headers)
+      for (const line of patchLines) {
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+")) linesAdded += 1;
+        else if (line.startsWith("-")) linesRemoved += 1;
+      }
+
+      // Preview from patch in standard unified diff format
+      for (const line of patchLines) {
+        if (line.startsWith("---") || line.startsWith("+++")) continue;
+        if (!line) continue;
+        diffLines.push(line);
+        if (diffLines.length >= MAX_DIFF_LINES) break;
+      }
+
+      const truncated = linesAdded + linesRemoved > MAX_DIFF_LINES;
       if (patchLines.length > MAX_PATCH_LINES) {
         patchTruncated = true;
         patch = patchLines.slice(0, MAX_PATCH_LINES).join("\n");
@@ -1258,28 +1384,39 @@ export function setSubagentExecutor(
 }
 
 export const taskTool = tool({
-  description: `Launch a new agent to handle complex, multistep tasks autonomously.
+  description: `Delegate a complex task to a specialized subagent.
 
-Available agent types:
-- general: General-purpose agent for researching questions and executing multi-step tasks
-- explore: Fast agent specialized for exploring codebases. Use for finding files, searching code, or answering codebase questions.
+**AVAILABLE AGENTS:**
 
-When to use:
-- Complex multistep tasks
-- Open-ended codebase exploration
-- Tasks requiring multiple search iterations
+| Agent | Use For |
+|-------|---------|
+| **explore** | Understand the codebase quickly (use semantic_search when indexed). |
+| **research** | External docs/APIs (use Exa / web sources). |
+| **general** | Multi-step execution that needs several tools. |
 
-When NOT to use:
-- If you want to read a specific file path, use Read instead
-- If searching for a specific class like "class Foo", use Glob instead
-- Simple tasks that can be done directly`,
+**WHEN TO USE:**
+- Open-ended exploration (“where/how is X implemented?”)
+- Multi-iteration searching / triangulation
+- Research that benefits from web sources
+- Large tasks you can split off to another agent
+
+**WHEN NOT TO USE:**
+- Reading a specific known file path (use Read directly)
+- Searching for exact class/function name (use Grep/Glob directly)
+- Simple single-step operations
+- Tasks requiring user interaction
+
+**BEST PRACTICES:**
+- Be specific about the deliverable (files, symbols, expected output).
+- Ask for evidence (paths + snippets).
+- Run multiple agents in parallel for independent questions.`,
   inputSchema: z.object({
     description: z
       .string()
       .describe("A short (3-5 words) description of the task"),
     prompt: z.string().describe("The detailed task for the agent to perform"),
     subagent_type: z
-      .enum(["general", "explore"])
+      .enum(["general", "explore", "research"])
       .describe("The type of specialized agent to use"),
   }),
   execute: async ({
@@ -1289,7 +1426,7 @@ When NOT to use:
   }: {
     description: string;
     prompt: string;
-    subagent_type: "general" | "explore";
+    subagent_type: "general" | "explore" | "research";
   }) => {
     if (!subagentExecutor) {
       return "Error: Subagent executor not configured.";
@@ -1309,26 +1446,17 @@ When NOT to use:
 // ============================================================================
 
 export const todoWriteTool = tool({
-  description: `Use this tool to create and manage a structured task list for your current coding session.
+  description: `Manage a structured todo list for the current coding session.
 
-When to Use:
-1. Complex multistep tasks - When a task requires 3 or more distinct steps
-2. User provides multiple tasks - When users provide a list of things to do
-3. After receiving new instructions - Immediately capture requirements as todos
-4. After completing a task - Mark it complete and add any new follow-up tasks
+Use this when:
+- The task is multi-step (3+ steps) or spans multiple files
+- You need to track progress explicitly
+- You just got new requirements that should be captured
 
-When NOT to Use:
-1. Single, straightforward task
-2. Task can be completed in less than 3 trivial steps
-3. Purely conversational or informational
-
-Task States:
-- pending: Task not yet started
-- in_progress: Currently working on (limit to ONE at a time)
-- completed: Task finished successfully
-- cancelled: Task no longer needed
-
-Mark tasks complete IMMEDIATELY after finishing.`,
+Rules:
+- Keep **at most one** todo \`in_progress\` at a time.
+- Mark todos \`completed\` immediately after finishing.
+- Keep todo content specific and actionable.`,
   inputSchema: z.object({
     todos: z
       .array(
@@ -1356,23 +1484,7 @@ Mark tasks complete IMMEDIATELY after finishing.`,
       completed: todos.filter((t) => t.status === "completed").length,
     };
 
-    return `Todo list updated: ${summary.pending} pending, ${summary.inProgress} in progress, ${summary.completed} completed`;
-  },
-});
-
-// ============================================================================
-// TODOREAD TOOL - Read current todos
-// ============================================================================
-
-export const todoReadTool = tool({
-  description: "Use this tool to read your current todo list",
-  inputSchema: z.object({}),
-  execute: async () => {
-    if (currentTodos.length === 0) {
-      return "No todos in list.";
-    }
-
-    return currentTodos
+    const text = todos
       .map((t) => {
         const icon =
           t.status === "completed"
@@ -1385,6 +1497,229 @@ export const todoReadTool = tool({
         return `${icon} ${t.id}: ${t.content} (${t.priority || "medium"})`;
       })
       .join("\n");
+
+    return {
+      success: true,
+      summary,
+      todos,
+      text,
+      message: `Todo list updated: ${summary.pending} pending, ${summary.inProgress} in progress, ${summary.completed} completed`,
+    };
+  },
+});
+
+// ============================================================================
+// TODOREAD TOOL - Read current todos
+// ============================================================================
+
+export const todoReadTool = tool({
+  description: "Use this tool to read your current todo list",
+  inputSchema: z.object({}),
+  execute: async () => {
+    const todos = currentTodos;
+    const text =
+      todos.length === 0
+        ? "No todos in list."
+        : todos
+            .map((t) => {
+              const icon =
+                t.status === "completed"
+                  ? "[x]"
+                  : t.status === "in_progress"
+                    ? "[>]"
+                    : t.status === "cancelled"
+                      ? "[-]"
+                      : "[ ]";
+              return `${icon} ${t.id}: ${t.content} (${t.priority || "medium"})`;
+            })
+            .join("\n");
+
+    return {
+      success: true,
+      todos,
+      text,
+      message: todos.length === 0 ? "No todos in list." : `Loaded ${todos.length} todos`,
+    };
+  },
+});
+
+// ============================================================================
+// QUESTION TOOL - Ask user for input/decisions
+// ============================================================================
+
+export const questionTool = tool({
+  description: `Ask the user questions during execution to gather preferences, clarify instructions, or get decisions.
+
+**WHEN TO USE:**
+- Gathering user preferences or requirements
+- Clarifying ambiguous instructions
+- Getting decisions on implementation choices
+- Offering the user choices about what direction to take
+- When multiple valid approaches exist and user input would help
+
+**WHEN NOT TO USE:**
+- When you can make a reasonable assumption
+- For trivial decisions that don't impact the outcome
+- When the user has already provided clear direction
+
+**BEHAVIOR:**
+- Users can always select "Other" to provide custom text input
+- Answers are returned as arrays of selected option labels
+- Set multiple: true to allow selecting more than one option
+- If you recommend a specific option, make it first and add "(Recommended)" to the label
+
+**EXAMPLE USAGE:**
+\`\`\`json
+{
+  "questions": [{
+    "question": "Which testing framework would you like to use for this project?",
+    "header": "Test Framework",
+    "options": [
+      {"label": "Jest (Recommended)", "description": "Fast, widely used, great for React"},
+      {"label": "Vitest", "description": "Vite-native, very fast, ESM-first"},
+      {"label": "Mocha + Chai", "description": "Flexible, mature, many plugins"}
+    ],
+    "multiple": false
+  }]
+}
+\`\`\``,
+  inputSchema: z.object({
+    questions: z.array(
+      z.object({
+        question: z.string().describe("Complete question to ask the user"),
+        header: z
+          .string()
+          .describe("Very short label for the question (max 12 chars)"),
+        options: z
+          .array(
+            z.object({
+              label: z
+                .string()
+                .describe("Display text for the option (1-5 words, concise)"),
+              description: z
+                .string()
+                .optional()
+                .describe("Brief explanation of the choice"),
+            }),
+          )
+          .describe("Available choices for the user"),
+        multiple: z
+          .boolean()
+          .optional()
+          .describe("Allow selecting multiple choices (default: false)"),
+      }),
+    ).describe("Questions to ask the user"),
+  }),
+  execute: async function* ({
+    questions,
+  }: {
+    questions: Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description?: string }>;
+      multiple?: boolean;
+    }>;
+  }) {
+    if (!questions || questions.length === 0) {
+      yield "No questions provided.";
+      return;
+    }
+
+    const results: Array<{
+      question: string;
+      answers: string[];
+      customText?: string;
+    }> = [];
+
+    for (const q of questions) {
+      const questionId = `question_${++questionCounter}_${Date.now()}`;
+
+      // Register the pending question
+      const questionRequest: QuestionRequest = {
+        id: questionId,
+        question: q.question,
+        header: q.header.slice(0, 12),
+        options: q.options.map((opt) => ({
+          label: opt.label,
+          description: opt.description,
+        })),
+        multiple: q.multiple ?? false,
+        createdAt: Date.now(),
+      };
+
+      pendingQuestions.set(questionId, questionRequest);
+
+      // Yield the question for the UI to display
+      yield {
+        status: "waiting_for_input" as const,
+        questionId,
+        question: q.question,
+        header: q.header.slice(0, 12),
+        options: q.options,
+        multiple: q.multiple ?? false,
+        message: `Waiting for user response: ${q.question}`,
+      };
+
+      // Wait for response (with timeout)
+      const MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes
+      const waitStart = Date.now();
+
+      while (true) {
+        await new Promise((r) => setTimeout(r, 100));
+
+        const response = questionResponses.get(questionId);
+        if (response) {
+          results.push({
+            question: q.question,
+            answers: response.answers,
+            customText: response.customText,
+          });
+          questionResponses.delete(questionId);
+          break;
+        }
+
+        // Check if question was cancelled
+        if (!pendingQuestions.has(questionId) && !questionResponses.has(questionId)) {
+          results.push({
+            question: q.question,
+            answers: [],
+            customText: "Question cancelled",
+          });
+          break;
+        }
+
+        if (Date.now() - waitStart > MAX_WAIT_MS) {
+          pendingQuestions.delete(questionId);
+          results.push({
+            question: q.question,
+            answers: [],
+            customText: "Question timed out",
+          });
+          break;
+        }
+      }
+    }
+
+    // Format the results
+    if (results.length === 1) {
+      const r = results[0]!;
+      if (r.customText && r.answers.length === 0) {
+        yield `User response: ${r.customText}`;
+      } else if (r.answers.length === 0) {
+        yield "No response received.";
+      } else {
+        yield `User selected: ${r.answers.join(", ")}${r.customText ? ` (${r.customText})` : ""}`;
+      }
+    } else {
+      const formatted = results.map((r, i) => {
+        const answer =
+          r.answers.length > 0
+            ? r.answers.join(", ")
+            : r.customText || "No response";
+        return `${i + 1}. ${r.question}\n   Answer: ${answer}`;
+      });
+      yield `User responses:\n\n${formatted.join("\n\n")}`;
+    }
   },
 });
 
@@ -1548,6 +1883,339 @@ REQUIRES: EXA_API_KEY environment variable.`,
 });
 
 // ============================================================================
+// SEMANTIC SEARCH TOOL - AI-powered code search using LanceDB index
+// ============================================================================
+
+// Cache for index availability check
+let indexAvailabilityCache: {
+  available: boolean;
+  stats: IndexStats | null;
+  checkedAt: number;
+} | null = null;
+
+const INDEX_CHECK_INTERVAL = 60000; // 1 minute
+
+async function checkIndexAvailable(): Promise<{
+  available: boolean;
+  stats: IndexStats | null;
+}> {
+  const now = Date.now();
+  if (
+    indexAvailabilityCache &&
+    now - indexAvailabilityCache.checkedAt < INDEX_CHECK_INTERVAL
+  ) {
+    return {
+      available: indexAvailabilityCache.available,
+      stats: indexAvailabilityCache.stats,
+    };
+  }
+
+  try {
+    const projectPath = getWorkspaceRoot();
+    const exists = await hasIndex(projectPath);
+
+    if (!exists) {
+      indexAvailabilityCache = { available: false, stats: null, checkedAt: now };
+      return { available: false, stats: null };
+    }
+
+    const stats = await getIndexStats(projectPath);
+    const available = stats.exists && stats.totalChunks > 0;
+
+    indexAvailabilityCache = { available, stats, checkedAt: now };
+    return { available, stats };
+  } catch {
+    indexAvailabilityCache = { available: false, stats: null, checkedAt: now };
+    return { available: false, stats: null };
+  }
+}
+
+export function invalidateIndexCache(): void {
+  indexAvailabilityCache = null;
+}
+
+// ============================================================================
+// AUTO-INDEX - Keep index up to date after file edits
+// ============================================================================
+
+const AUTO_INDEX_DEBOUNCE_MS = 1500;
+let autoIndexTimer: NodeJS.Timeout | null = null;
+let autoIndexInFlight: Promise<void> | null = null;
+let autoIndexRequested = false;
+let autoIndexWaiters: Array<() => void> = [];
+
+function notifyAutoIndexWaiters(): void {
+  const waiters = autoIndexWaiters;
+  autoIndexWaiters = [];
+  for (const w of waiters) w();
+}
+
+export async function awaitAutoIndexIdle(): Promise<void> {
+  if (!autoIndexTimer && !autoIndexInFlight) return;
+  await new Promise<void>((resolve) => autoIndexWaiters.push(resolve));
+}
+
+async function runAutoIndexOnce(): Promise<void> {
+  const projectPath = getWorkspaceRoot();
+
+  // Only auto-index if an index already exists (keeps this from surprising users)
+  const exists = await hasIndex(projectPath);
+  if (!exists) return;
+
+  const voyageApiKey = await getApiKeyAsync("voyage");
+  if (!voyageApiKey) return;
+
+  // Respect per-project preferences if present
+  const cfg = await loadProjectConfig(projectPath);
+  const voyageModel = cfg.voyageModel;
+  const excludePatterns = cfg.excludePatterns ?? [];
+
+  const indexer = new CodebaseIndexer({
+    projectPath,
+    voyageApiKey,
+    ...(voyageModel ? { voyageModel } : {}),
+    ...(excludePatterns.length ? { excludePatterns } : {}),
+  });
+
+  await indexer.index();
+  invalidateIndexCache();
+}
+
+function scheduleAutoIndex(): void {
+  autoIndexRequested = true;
+  invalidateIndexCache();
+
+  if (autoIndexTimer) clearTimeout(autoIndexTimer);
+
+  autoIndexTimer = setTimeout(() => {
+    autoIndexTimer = null;
+    if (autoIndexInFlight) return;
+
+    autoIndexInFlight = (async () => {
+      try {
+        while (autoIndexRequested) {
+          autoIndexRequested = false;
+          await runAutoIndexOnce();
+        }
+      } catch {
+        // Best-effort: never break the agent workflow
+      } finally {
+        autoIndexInFlight = null;
+        notifyAutoIndexWaiters();
+      }
+    })();
+  }, AUTO_INDEX_DEBOUNCE_MS);
+}
+
+export async function isSemanticSearchAvailable(): Promise<boolean> {
+  const { available } = await checkIndexAvailable();
+  return available;
+}
+
+export const semanticSearchTool = tool({
+  description: `Semantic code search over the indexed codebase (meaning-based, not exact text).
+
+**WHEN TO USE:**
+- “Where/how is X implemented?”
+- Pattern discovery / architecture questions
+- Finding related code without knowing exact symbols
+
+**WHEN NOT TO USE:**
+- Exact text search (use Grep instead)
+- Finding files by name (use Glob instead)
+- Reading specific files (use Read instead)
+
+**REQUIRES:** Codebase must be indexed.
+
+Returns ranked code chunks with file paths and line ranges.`,
+  inputSchema: z.object({
+    query: z.string().describe("Natural language description of what you're looking for"),
+    limit: z
+      .number()
+      .optional()
+      .describe("Maximum results to return (default: 10, max: 25)"),
+    language: z
+      .string()
+      .optional()
+      .describe("Filter by programming language (e.g., 'typescript', 'python')"),
+    chunkType: z
+      .enum(["function", "class", "method", "interface", "type", "module", "file"])
+      .optional()
+      .describe("Filter by code structure type"),
+    minScore: z
+      .number()
+      .optional()
+      .describe("Minimum similarity score 0-1 (default: 0.3)"),
+  }),
+  execute: async function* ({
+    query,
+    limit = 10,
+    language,
+    chunkType,
+    minScore = 0.3,
+  }: {
+    query: string;
+    limit?: number;
+    language?: string;
+    chunkType?: "function" | "class" | "method" | "interface" | "type" | "module" | "file";
+    minScore?: number;
+  }) {
+    const projectPath = getWorkspaceRoot();
+    const voyageApiKey = await getApiKeyAsync("voyage");
+
+    // If an auto-index is scheduled or running, wait so results are fresh.
+    await awaitAutoIndexIdle();
+
+    // Check if semantic search is available
+    const { available, stats } = await checkIndexAvailable();
+
+    if (!available) {
+      yield `Semantic search not available. Codebase is not indexed.
+
+To enable semantic search:
+1. Save a Voyage API key in Erzencode (provider: voyage)
+2. Run: erzencode index
+
+This will create AI embeddings for your code, enabling powerful semantic search.`;
+      return;
+    }
+
+    if (!voyageApiKey) {
+      yield `Semantic search requires a Voyage API key.
+
+The codebase is indexed (${stats?.totalChunks ?? 0} chunks), but search requires an API key.
+Save a Voyage API key (provider: voyage) to enable semantic search.`;
+      return;
+    }
+
+    yield {
+      status: "loading" as const,
+      message: `Searching ${stats?.totalChunks ?? 0} code chunks for: "${query.slice(0, 50)}${query.length > 50 ? "..." : ""}"`,
+    };
+
+    try {
+      const searchOptions: SearchOptions = {
+        limit: Math.min(limit, 25),
+        minScore,
+      };
+
+      if (language) {
+        searchOptions.language = language as any;
+      }
+
+      if (chunkType) {
+        searchOptions.chunkType = chunkType;
+      }
+
+      const results = await searchCodebase(projectPath, query, voyageApiKey, searchOptions);
+
+      if (results.length === 0) {
+        yield `No results found for: "${query}"
+
+Try:
+- Rephrasing your query
+- Lowering minScore (currently ${minScore})
+- Removing language/type filters
+- Using more general terms`;
+        return;
+      }
+
+      // Format results
+      const formattedResults = results.map((r, i) => {
+        const { chunk, score } = r;
+        const header = `## Result ${i + 1}: ${chunk.symbol_name || chunk.chunk_type} (${(score * 100).toFixed(1)}% match)`;
+        const location = `📍 \`${chunk.file_path}:${chunk.start_line}-${chunk.end_line}\``;
+        const meta = `📦 ${chunk.language} ${chunk.chunk_type}`;
+        const code = "```" + chunk.language + "\n" + chunk.code.slice(0, 1500) + (chunk.code.length > 1500 ? "\n// ... (truncated)" : "") + "\n```";
+
+        return `${header}\n${location} | ${meta}\n\n${code}`;
+      });
+
+      const summary = `Found ${results.length} result${results.length !== 1 ? "s" : ""} for "${query}" (searched ${stats?.totalChunks ?? 0} chunks)`;
+
+      yield `# Semantic Search Results
+
+${summary}
+
+---
+
+${formattedResults.join("\n\n---\n\n")}`;
+    } catch (error) {
+      yield `Error during semantic search: ${error instanceof Error ? error.message : String(error)}
+
+This might be due to:
+- Invalid API key
+- Network issues
+- Corrupted index (try: erzencode index --force)`;
+    }
+  },
+});
+
+// ============================================================================
+// INDEX STATUS TOOL - Check codebase index status
+// ============================================================================
+
+export const indexStatusTool = tool({
+  description: `Check the status of the codebase semantic index.
+
+Returns information about:
+- Whether the codebase is indexed
+- Number of files and code chunks
+- Last update time
+- Index size
+
+Use this to determine if semantic search is available.`,
+  inputSchema: z.object({}),
+  execute: async () => {
+    const projectPath = getWorkspaceRoot();
+    const voyageKeySet = !!(await getApiKeyAsync("voyage"));
+
+    await awaitAutoIndexIdle();
+
+    try {
+      const exists = await hasIndex(projectPath);
+
+      if (!exists) {
+        return {
+          indexed: false,
+          message: "Codebase is not indexed. Run 'erzencode index' to enable semantic search.",
+          voyageKeySet,
+        };
+      }
+
+      const stats = await getIndexStats(projectPath);
+
+      const lastUpdated = stats.lastUpdated
+        ? new Date(stats.lastUpdated).toLocaleString()
+        : "Unknown";
+
+      const sizeFormatted = stats.sizeBytes
+        ? stats.sizeBytes > 1024 * 1024
+          ? `${(stats.sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+          : `${(stats.sizeBytes / 1024).toFixed(2)} KB`
+        : "Unknown";
+
+      return {
+        indexed: true,
+        totalFiles: stats.totalFiles,
+        totalChunks: stats.totalChunks,
+        voyageModel: stats.voyageModel || "voyage-code-3",
+        lastUpdated,
+        size: sizeFormatted,
+        voyageKeySet,
+        message: `Codebase indexed: ${stats.totalFiles} files, ${stats.totalChunks} searchable chunks`,
+      };
+    } catch (error) {
+      return {
+        indexed: false,
+        error: error instanceof Error ? error.message : String(error),
+        message: "Error checking index status",
+      };
+    }
+  },
+});
+
+// ============================================================================
 // Get All Tools
 // ============================================================================
 
@@ -1563,9 +2231,12 @@ export function getAllTools(): Record<string, Tool<any, any>> {
     task: taskTool,
     todowrite: todoWriteTool,
     todoread: todoReadTool,
+    question: questionTool,
     webfetch: webFetchTool,
     exa_web_search: exaWebSearchTool,
     exa_code_search: exaCodeSearchTool,
+    semantic_search: semanticSearchTool,
+    index_status: indexStatusTool,
   };
 }
 

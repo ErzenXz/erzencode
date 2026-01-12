@@ -2,17 +2,36 @@ import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import figures from "figures";
-import type { ChatMessage, ToolPart, MessagePart } from "../types.js";
+import type { ChatMessage, ToolPart, MessagePart, ThemeColors } from "../types.js";
 import { renderMarkdown } from "../../markdown.js";
 
 interface AssistantMessageProps {
   message: ChatMessage;
   width: number;
+  themeColors?: ThemeColors;
 }
+
+// Default theme colors for backwards compatibility
+const defaultColors: ThemeColors = {
+  primary: "#7dd3fc",
+  secondary: "#c4b5fd",
+  success: "#4ade80",
+  warning: "#fbbf24",
+  error: "#f87171",
+  info: "#38bdf8",
+  text: "#f1f5f9",
+  textMuted: "#94a3b8",
+  textDim: "#64748b",
+  border: "#475569",
+  user: "#4ade80",
+  assistant: "#7dd3fc",
+  tool: "#fbbf24",
+};
 
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   message,
   width,
+  themeColors = defaultColors,
 }) => {
   const parts = message.parts ?? [];
 
@@ -42,7 +61,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     return (
       <Box flexDirection="column" marginBottom={1}>
         <Text wrap="wrap">{renderMarkdown(message.content)}</Text>
-        {message.isStreaming && <Spinner type="dots" />}
+        {message.isStreaming && <Text color={themeColors.warning}><Spinner type="dots" /></Text>}
       </Box>
     );
   }
@@ -51,7 +70,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     <Box flexDirection="column" marginBottom={1}>
       {groupedParts.map((item, idx) => {
         if ("tools" in item && item.type === "tool-group") {
-          return <ToolGroup key={idx} tools={item.tools} />;
+          return <ToolGroup key={idx} tools={item.tools} themeColors={themeColors} />;
         }
 
         const part = item as MessagePart;
@@ -68,13 +87,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           return (
             <Box key={idx} flexDirection="column" marginY={0}>
               <Box gap={1}>
-                <Text color="magenta">{figures.pointer}</Text>
-                <Text color="magenta" bold>
+                <Text color={themeColors.secondary}>{figures.pointer}</Text>
+                <Text color={themeColors.secondary} bold>
                   Thinking
                 </Text>
               </Box>
               <Box paddingLeft={2}>
-                <Text color="gray" dimColor italic wrap="wrap">
+                <Text color={themeColors.textDim} dimColor italic wrap="wrap">
                   {preview}
                 </Text>
               </Box>
@@ -84,7 +103,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
         if (part.type === "action") {
           return (
-            <Text key={idx} color="gray">
+            <Text key={idx} color={themeColors.textMuted}>
               {part.content}
             </Text>
           );
@@ -102,12 +121,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           return (
             <Box key={idx} flexDirection="column" marginY={1}>
               <Box gap={1}>
-                <Text color="red" bold>
+                <Text color={themeColors.error} bold>
                   {figures.cross} Error
                 </Text>
               </Box>
               <Box paddingLeft={2} flexDirection="column">
-                <Text color="red" wrap="wrap">
+                <Text color={themeColors.error} wrap="wrap">
                   {part.content}
                 </Text>
               </Box>
@@ -119,7 +138,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       })}
       {message.isStreaming && (
         <Box marginTop={1}>
-          <Spinner type="dots" />
+          <Text color={themeColors.warning}><Spinner type="dots" /></Text>
         </Box>
       )}
     </Box>
@@ -128,9 +147,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
 interface ToolGroupProps {
   tools: ToolPart[];
+  themeColors: ThemeColors;
 }
 
-const ToolGroup: React.FC<ToolGroupProps> = ({ tools }) => {
+const ToolGroup: React.FC<ToolGroupProps> = ({ tools, themeColors }) => {
   // Group by action type
   const readTools = tools.filter((t) => t.name.toLowerCase().includes("read"));
   const otherTools = tools.filter(
@@ -145,20 +165,20 @@ const ToolGroup: React.FC<ToolGroupProps> = ({ tools }) => {
         <Box flexDirection="column">
           <Box gap={1}>
             {anyRunning && readTools.some((t) => t.status === "running") ? (
-              <Text color="yellow">
+              <Text color={themeColors.warning}>
                 <Spinner type="dots" />
               </Text>
             ) : (
-              <Text color="gray">{figures.circleFilled}</Text>
+              <Text color={themeColors.textMuted}>{figures.circleFilled}</Text>
             )}
-            <Text bold>
+            <Text color={themeColors.text} bold>
               Read {readTools.length}{" "}
               {readTools.length === 1 ? "file" : "files"}
             </Text>
           </Box>
           <Box flexDirection="column" paddingLeft={2}>
             {readTools.map((tool, i) => (
-              <Text key={i} color="gray">
+              <Text key={i} color={themeColors.textMuted}>
                 Read {extractFileName(tool)}
               </Text>
             ))}
@@ -168,13 +188,13 @@ const ToolGroup: React.FC<ToolGroupProps> = ({ tools }) => {
       {otherTools.map((tool, idx) => (
         <Box key={idx} gap={1}>
           {tool.status === "running" ? (
-            <Text color="yellow">
+            <Text color={themeColors.warning}>
               <Spinner type="dots" />
             </Text>
           ) : (
-            <Text color="gray">{figures.circleFilled}</Text>
+            <Text color={themeColors.textMuted}>{figures.circleFilled}</Text>
           )}
-          <Text bold>{formatToolName(tool)}</Text>
+          <Text color={themeColors.text} bold>{formatToolName(tool)}</Text>
         </Box>
       ))}
     </Box>

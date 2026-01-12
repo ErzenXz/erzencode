@@ -1,9 +1,8 @@
+/* Import Tailwind CSS v4 */
+@import "tailwindcss";
+
 /* Import Lovable-inspired theme */
 @import "./styles/theme.css";
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 :root {
   color-scheme: dark;
@@ -35,4 +34,26 @@ body,
 
 body {
   margin: 0;
+}
+
+/* xterm.js specific styles */
+.xterm {
+  padding: 8px;
+  height: 100%;
+  width: 100%;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+.xterm-screen {
+  pointer-events: auto !important;
+  user-select: text !important;
+}
+
+.xterm .xterm-rows {
+  pointer-events: auto !important;
+  user-select: text !important;
 }

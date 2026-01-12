@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -27,7 +27,18 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
-  const { config, providers, setProvider, setModel } = useConfig();
+  const {
+    config,
+    providers,
+    models,
+    loadModels,
+    refreshProviders,
+    setProvider,
+    setModel,
+    setThinkingLevel,
+    setTemperature,
+    setMaxTokens,
+  } = useConfig();
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -37,9 +48,24 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     }
   };
 
+  useEffect(() => {
+    if (!open) return;
+    if (!config?.provider) return;
+    void loadModels(config.provider);
+  }, [config?.provider, loadModels, open]);
+
   const handleSaveApiKey = async () => {
-    // TODO: Implement API key saving
-    console.log("Saving API key for provider:", config?.provider);
+    const provider = config?.provider;
+    if (!provider) return;
+    const trimmed = apiKey.trim();
+    if (!trimmed) return;
+
+    await fetch("/api/api-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, apiKey: trimmed }),
+    });
+    await refreshProviders();
   };
 
   if (!config) return null;
@@ -99,13 +125,63 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={config.model}>{config.model}</SelectItem>
-                  {/* Models will be loaded dynamically */}
+                  {models.length > 0 ? (
+                    models.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value={config.model}>{config.model}</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
                 Select the AI model to use for code generation
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="thinking">Thinking</Label>
+              <Select
+                value={config.thinkingLevel ?? "off"}
+                onValueChange={(v) => setThinkingLevel(v as any)}
+              >
+                <SelectTrigger id="thinking">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">Off</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="temperature">Temperature</Label>
+                <Input
+                  id="temperature"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={String(config.temperature ?? 0.7)}
+                  onChange={(e) => setTemperature(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="maxTokens">Max tokens</Label>
+                <Input
+                  id="maxTokens"
+                  type="number"
+                  min="1"
+                  value={String(config.maxTokens ?? 16384)}
+                  onChange={(e) => setMaxTokens(Number(e.target.value))}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

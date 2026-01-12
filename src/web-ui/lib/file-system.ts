@@ -16,8 +16,19 @@ export interface FileContent {
 class FileSystemAPI {
   private baseUrl = "/api";
 
-  async listFiles(path: string = "."): Promise<FileEntry[]> {
-    const response = await fetch(`${this.baseUrl}/files?path=${encodeURIComponent(path)}`);
+  private withSession(url: string, sessionId?: string): string {
+    if (!sessionId) return url;
+    const u = new URL(url, window.location.origin);
+    u.searchParams.set("sessionId", sessionId);
+    return u.pathname + u.search;
+  }
+
+  async listFiles(path: string = ".", sessionId?: string): Promise<FileEntry[]> {
+    const url = this.withSession(
+      `${this.baseUrl}/files?path=${encodeURIComponent(path)}`,
+      sessionId
+    );
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to list files: ${response.statusText}`);
     }
@@ -25,8 +36,12 @@ class FileSystemAPI {
     return data.files || [];
   }
 
-  async readFile(path: string): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/files/content?path=${encodeURIComponent(path)}`);
+  async readFile(path: string, sessionId?: string): Promise<string> {
+    const url = this.withSession(
+      `${this.baseUrl}/files/content?path=${encodeURIComponent(path)}`,
+      sessionId
+    );
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to read file: ${response.statusText}`);
     }
@@ -34,8 +49,12 @@ class FileSystemAPI {
     return data.content || "";
   }
 
-  async writeFile(path: string, content: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/files/content?path=${encodeURIComponent(path)}`, {
+  async writeFile(path: string, content: string, sessionId?: string): Promise<void> {
+    const url = this.withSession(
+      `${this.baseUrl}/files/content?path=${encodeURIComponent(path)}`,
+      sessionId
+    );
+    const response = await fetch(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
@@ -45,8 +64,12 @@ class FileSystemAPI {
     }
   }
 
-  async deleteFile(path: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/files?path=${encodeURIComponent(path)}`, {
+  async deleteFile(path: string, sessionId?: string): Promise<void> {
+    const url = this.withSession(
+      `${this.baseUrl}/files?path=${encodeURIComponent(path)}`,
+      sessionId
+    );
+    const response = await fetch(url, {
       method: "DELETE",
     });
     if (!response.ok) {
@@ -54,8 +77,9 @@ class FileSystemAPI {
     }
   }
 
-  async createDirectory(path: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/files/mkdir`, {
+  async createDirectory(path: string, sessionId?: string): Promise<void> {
+    const url = this.withSession(`${this.baseUrl}/files/mkdir`, sessionId);
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -65,8 +89,9 @@ class FileSystemAPI {
     }
   }
 
-  async moveFile(from: string, to: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/files/move`, {
+  async moveFile(from: string, to: string, sessionId?: string): Promise<void> {
+    const url = this.withSession(`${this.baseUrl}/files/move`, sessionId);
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from, to }),

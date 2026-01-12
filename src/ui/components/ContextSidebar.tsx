@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import figures from "figures";
@@ -23,11 +23,11 @@ interface ContextSidebarProps {
   activeFiles: Map<string, FileInfo>;
   runningTools: Array<{ id: string; name: string }>;
   todos: TodoItem[];
-  width: number;
   height: number;
-  contextLimit?: number; // Max context window in tokens
-  pricing?: { input: number; output: number }; // per million tokens
-  queueCount?: number; // Number of queued messages
+  contextLimit: number;
+  pricing?: { input: number; output: number };
+  queueCount?: number;
+  isCompacting?: boolean;
 }
 
 // Format cost in dollars
@@ -37,8 +37,12 @@ function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
+// Fixed sidebar width for consistency
+const SIDEBAR_WIDTH = 24;
+
 export const ContextSidebar: React.FC<ContextSidebarProps> = ({
   model,
+  mode,
   status,
   isThinking,
   sessionTokens,
@@ -49,212 +53,153 @@ export const ContextSidebar: React.FC<ContextSidebarProps> = ({
   activeFiles,
   runningTools,
   todos,
-  width,
   height,
-  contextLimit = 200000, // Default 200k context
+  contextLimit,
   pricing,
   queueCount = 0,
+  isCompacting = false,
 }) => {
-  // Calculate context usage percentage
-  const contextPercent = Math.min(
-    100,
-    Math.round((sessionTokens / contextLimit) * 100),
-  );
-  const contextColor =
-    contextPercent > 80 ? "red" : contextPercent > 50 ? "yellow" : "green";
-
-  // Create a minimal progress bar
-  const barWidth = Math.max(8, width - 12);
-  const filledWidth = Math.round((contextPercent / 100) * barWidth);
-  const progressBar =
-    "█".repeat(filledWidth) + "░".repeat(barWidth - filledWidth);
-
-  // Calculate cost
-  const inputCost = pricing ? (inputTokens / 1_000_000) * pricing.input : 0;
-  const outputCost = pricing ? (outputTokens / 1_000_000) * pricing.output : 0;
-  const totalCost = inputCost + outputCost;
-
-  // Calculate last task cost
-  const lastTaskInputCost = pricing
-    ? (lastTaskInputTokens / 1_000_000) * pricing.input
-    : 0;
-  const lastTaskOutputCost = pricing
-    ? (lastTaskOutputTokens / 1_000_000) * pricing.output
-    : 0;
-  const lastTaskCost = lastTaskInputCost + lastTaskOutputCost;
+  const width = SIDEBAR_WIDTH;
+  // Memoize calculations for performance
+  const { contextPercent, contextColor, progressBar, totalCost, lastTaskCost } = useMemo(() => {
+    const pct = contextLimit > 0 ? Math.min(100, Math.round((sessionTokens / contextLimit) * 100)) : 0;
+    const color = pct > 80 ? "red" : pct > 50 ? "yellow" : "green";
+    
+    // Compact progress bar
+    const barWidth = 16;
+    const filledWidth = Math.round((pct / 100) * barWidth);
+    const bar = "█".repeat(filledWidth) + "░".repeat(barWidth - filledWidth);
+    
+    // Costs
+    const inCost = pricing ? (inputTokens / 1_000_000) * pricing.input : 0;
+    const outCost = pricing ? (outputTokens / 1_000_000) * pricing.output : 0;
+    const total = inCost + outCost;
+    
+    const lastIn = pricing ? (lastTaskInputTokens / 1_000_000) * pricing.input : 0;
+    const lastOut = pricing ? (lastTaskOutputTokens / 1_000_000) * pricing.output : 0;
+    const lastTotal = lastIn + lastOut;
+    
+    return { contextPercent: pct, contextColor: color, progressBar: bar, totalCost: total, lastTaskCost: lastTotal };
+  }, [sessionTokens, contextLimit, pricing, inputTokens, outputTokens, lastTaskInputTokens, lastTaskOutputTokens]);
 
   return (
     <Box
       flexDirection="column"
       width={width}
       height={height}
-      borderLeft
+      borderStyle="single"
       borderColor="gray"
-      paddingLeft={1}
-      overflow="hidden"
+      paddingX={1}
     >
-      {/* Model & Context */}
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color="gray" dimColor>
-          {truncate(model, Math.max(10, width - 4))}
+      {/* Header: Mode */}
+      <Box justifyContent="center" marginBottom={0}>
+        <Text color={mode === "agent" ? "blue" : mode === "plan" ? "yellow" : "green"} bold>
+          {mode.toUpperCase()}
         </Text>
+      </Box>
 
-        {/* Context usage with progress bar - always show */}
-        <Box flexDirection="column" marginTop={0}>
-          <Box>
-            <Text color="gray" dimColor>
-              Context{" "}
-            </Text>
-            <Text color={contextColor} bold>
-              {contextPercent}%
-            </Text>
-          </Box>
-          <Text color={contextColor} dimColor>
-            {progressBar}
-          </Text>
-          <Text color="gray" dimColor>
-            {formatTokens(sessionTokens)}/{formatTokens(contextLimit)}
-          </Text>
+      {/* Context usage - compact display */}
+      <Box flexDirection="column" marginTop={0}>
+        <Box justifyContent="space-between">
+          <Text color="gray">Context</Text>
+          <Text color={contextColor} bold>{contextPercent}%</Text>
         </Box>
-
-        {/* Cost tracking - always show */}
-        <Box flexDirection="column" marginTop={0}>
-          <Box>
-            <Text color="gray" dimColor>
-              Cost:{" "}
-            </Text>
-            <Text color="green" bold>
-              {formatCost(totalCost)}
-            </Text>
-            {lastTaskCost > 0 && (
-              <Text color="gray" dimColor>
-                {" "}
-                (+{formatCost(lastTaskCost)})
-              </Text>
-            )}
-          </Box>
-        </Box>
-
-        {/* Token breakdown */}
-        {(inputTokens > 0 || outputTokens > 0) && (
-          <Text color="gray" dimColor>
-            {figures.arrowDown}
-            {formatTokens(inputTokens)} {figures.arrowUp}
-            {formatTokens(outputTokens)}
-          </Text>
-        )}
-
-        {/* Message queue indicator */}
-        {queueCount > 0 && (
-          <Box marginTop={0}>
-            <Text color="cyan" bold>
-              {figures.info} {queueCount} queued
-            </Text>
+        <Text color={contextColor}>{progressBar}</Text>
+        <Text color="gray" dimColor>
+          {formatTokens(sessionTokens)}/{formatTokens(contextLimit)}
+        </Text>
+        {isCompacting && (
+          <Box gap={1}>
+            <Text color="yellow"><Spinner type="dots" /></Text>
+            <Text color="yellow">Compacting...</Text>
           </Box>
         )}
       </Box>
 
-      {/* Running Tools */}
+      {/* Cost - compact */}
+      <Box marginTop={1} justifyContent="space-between">
+        <Text color="gray">Cost</Text>
+        <Text color="green" bold>{formatCost(totalCost)}</Text>
+      </Box>
+      {lastTaskCost > 0 && (
+        <Text color="gray" dimColor>+{formatCost(lastTaskCost)} last</Text>
+      )}
+
+      {/* Tokens: input/output */}
+      {(inputTokens > 0 || outputTokens > 0) && (
+        <Box marginTop={0}>
+          <Text color="gray" dimColor>
+            {figures.arrowDown}{formatTokens(inputTokens)} {figures.arrowUp}{formatTokens(outputTokens)}
+          </Text>
+        </Box>
+      )}
+
+      {/* Queue indicator */}
+      {queueCount > 0 && (
+        <Text color="cyan" bold>{figures.info} {queueCount} queued</Text>
+      )}
+
+      {/* Running Tools - compact */}
       {runningTools.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="column" marginTop={1}>
           <Box gap={1}>
-            <Text color="yellow">
-              <Spinner type="dots" />
-            </Text>
-            <Text bold color="yellow">
-              Running
-            </Text>
+            <Text color="yellow"><Spinner type="dots" /></Text>
+            <Text color="yellow" bold>Tools</Text>
           </Box>
-          {runningTools.slice(0, 3).map((t) => (
+          {runningTools.slice(0, 2).map((t) => (
             <Text key={t.id} color="yellow" dimColor>
-              {truncate(t.name.replace(/_/g, " "), Math.max(10, width - 4))}
+              {truncate(t.name.replace(/_/g, " "), width - 3)}
             </Text>
           ))}
-          {runningTools.length > 3 && (
-            <Text color="gray" dimColor>
-              +{runningTools.length - 3} more
-            </Text>
+          {runningTools.length > 2 && (
+            <Text color="gray" dimColor>+{runningTools.length - 2} more</Text>
           )}
         </Box>
       )}
 
-      {/* Active Files */}
+      {/* Active Files - compact */}
       {activeFiles.size > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="green">
-            {figures.tick} Files
-          </Text>
-          {Array.from(activeFiles.values())
-            .slice(0, 5)
-            .map((f) => (
-              <Text key={f.path} color="gray" dimColor>
-                {f.action === "read"
-                  ? figures.circle
-                  : f.action === "write"
-                    ? figures.tick
-                    : figures.pointer}{" "}
-                {truncate(
-                  f.path.split("/").pop() ?? "",
-                  Math.max(8, width - 6),
-                )}
-              </Text>
-            ))}
-          {activeFiles.size > 5 && (
-            <Text color="gray" dimColor>
-              +{activeFiles.size - 5} more
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="green" bold>{figures.tick} Files ({activeFiles.size})</Text>
+          {Array.from(activeFiles.values()).slice(0, 3).map((f) => (
+            <Text key={f.path} color="gray" dimColor>
+              {truncate(f.path.split("/").pop() ?? "", width - 3)}
             </Text>
+          ))}
+          {activeFiles.size > 3 && (
+            <Text color="gray" dimColor>+{activeFiles.size - 3} more</Text>
           )}
         </Box>
       )}
 
-      {/* Tasks */}
+      {/* Tasks - compact */}
       {todos.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="yellow">
-            {figures.bullet} Tasks (
-            {todos.filter((t) => t.status === "completed").length}/
-            {todos.length})
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="yellow" bold>
+            {figures.bullet} {todos.filter((t) => t.status === "completed").length}/{todos.length} Tasks
           </Text>
-          {todos
-            .filter((t) => t.status !== "completed")
-            .slice(0, 4)
-            .flatMap((t) => {
-              const icon =
-                t.status === "in_progress" ? figures.pointer : figures.circle;
-              const color = t.status === "in_progress" ? "yellow" : "gray";
-              const wrapped = wrapText(t.content, Math.max(8, width - 5));
-              return wrapped.slice(0, 2).map((line, idx) => (
-                <Text key={`${t.id}:${idx}`} color={color} dimColor={idx > 0}>
-                  {idx === 0
-                    ? `${icon} ${line}`
-                    : `  ${line.slice(0, Math.max(5, width - 6))}...`}
-                </Text>
-              ));
-            })}
-        </Box>
-      )}
-
-      {/* Status - only when thinking */}
-      {isThinking && status && (
-        <Box flexDirection="column" marginTop={0}>
-          <Text color="blue" dimColor>
-            {truncate(status, Math.max(10, width - 4))}
-          </Text>
+          {todos.filter((t) => t.status !== "completed").slice(0, 3).map((t) => (
+            <Text key={t.id} color={t.status === "in_progress" ? "yellow" : "gray"} dimColor>
+              {t.status === "in_progress" ? figures.pointer : figures.circle} {truncate(t.content, width - 4)}
+            </Text>
+          ))}
         </Box>
       )}
 
       {/* Spacer */}
       <Box flexGrow={1} />
 
-      {/* Help hints */}
-      <Box flexDirection="column">
-        <Text color="gray" dimColor>
-          {"─".repeat(Math.min(12, width - 4))}
-        </Text>
-        <Text color="gray" dimColor>
-          /help • ESC×2 cancel
-        </Text>
+      {/* Status when thinking */}
+      {isThinking && status && (
+        <Text color="blue" dimColor>{truncate(status, width - 2)}</Text>
+      )}
+
+      {/* Model name at bottom */}
+      <Box marginTop={1}>
+        <Text color="gray" dimColor>{truncate(model, width - 2)}</Text>
       </Box>
     </Box>
   );
 };
+
+export { SIDEBAR_WIDTH };

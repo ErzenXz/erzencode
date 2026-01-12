@@ -1,16 +1,36 @@
+/**
+ * Web UI Server
+ * Serves the React-based web UI with API endpoints
+ */
+
 import http from "node:http";
-import { spawn, exec, type ChildProcess } from "node:child_process";
+import { spawn, exec } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { createAIAgent, type AgentConfig, type AgentMode } from "./ai-agent.js";
-import { setWorkspaceRoot } from "./tools-standalone.js";
+import {
+  setWorkspaceRoot,
+  approveBashCommandOnce,
+  cancelBashApproval,
+  setBashYoloMode,
+  addBashAllowPrefix,
+  removeBashAllowPrefix,
+  getBashApprovalStatus,
+  getPendingBashApprovals,
+} from "./tools-standalone.js";
 import type { ProviderType } from "./ai-provider.js";
-import { getWebModeHTML } from "./web-templates/web-mode.js";
-import { getVibeModeHTML } from "./web-templates/vibe-mode.js";
-import { MODEL_CHOICES, PROVIDERS, getApiKeyAsync } from "./config.js";
+import {
+  MODEL_CHOICES,
+  PROVIDERS,
+  getApiKeyAsync,
+  modelSupportsThinking,
+  resolveThinkingConfig,
+  setApiKey,
+  type ThinkingLevel,
+} from "./config.js";
 
 const WEB_UI_DIST_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -18,6 +38,26 @@ const WEB_UI_DIST_DIR = path.resolve(
   "dist",
   "web-ui",
 );
+
+async function resolveWebUIDistDir(): Promise<string | null> {
+  const candidates = [
+    WEB_UI_DIST_DIR,
+    path.resolve(process.cwd(), "dist", "web-ui"),
+    path.resolve(process.cwd(), "node_modules", "erzencode", "dist", "web-ui"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const indexPath = path.join(candidate, "index.html");
+      const st = await fs.stat(indexPath);
+      if (st.isFile()) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
 
 function contentTypeForPath(p: string): string {
   const ext = path.extname(p).toLowerCase();
@@ -39,27 +79,42 @@ function contentTypeForPath(p: string): string {
       return "image/gif";
     case ".map":
       return "application/json; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".woff":
+    case ".woff2":
+      return "font/woff2";
     default:
       return "application/octet-stream";
   }
 }
 
-async function tryServeStatic(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+// Check at startup if web UI is built
+async function validateWebUIBuilt(distDir: string): Promise<boolean> {
+  try {
+    const indexPath = path.join(distDir, "index.html");
+    const stat = await fs.stat(indexPath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function tryServeStatic(
+  distDir: string,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<boolean> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
   if (url.pathname.startsWith("/api/")) return false;
   if (req.method !== "GET") return false;
 
-  try {
-    const indexPath = path.join(WEB_UI_DIST_DIR, "index.html");
-    await fs.stat(indexPath);
-  } catch {
-    return false;
-  }
-
   let rel = url.pathname;
-  if (rel === "/") rel = "/index.html";
+  if (rel === "/") rel = "index.html";
+  rel = rel.replace(/^\/+/, "");
   rel = rel.replace(/\.{2,}/g, ".");
-  const filePath = path.join(WEB_UI_DIST_DIR, rel);
+
+  const filePath = path.join(distDir, rel);
 
   try {
     const st = await fs.stat(filePath);
@@ -72,9 +127,37 @@ async function tryServeStatic(req: http.IncomingMessage, res: http.ServerRespons
     res.end(buf);
     return true;
   } catch {
+    // For root path, show helpful error if index.html doesn't exist
     if (url.pathname === "/") {
+      res.statusCode = 503;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Web UI Not Built</title>
+  <style>
+    body { font-family: system-ui; max-width: 600px; margin: 80px auto; padding: 20px; }
+    h1 { color: #e11d48; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>⚠️ Web UI Not Built</h1>
+  <p>The web UI assets haven't been built yet. Run the following command:</p>
+  <pre><code>npm run build:web-ui</code></pre>
+  <p>Then start the web UI again.</p>
+</body>
+</html>`);
+      return true;
+    }
+
+    // SPA fallback: serve index.html for client-side routes (e.g. /vibe)
+    // Only do this when the path doesn't look like a real asset request.
+    if (!path.extname(url.pathname)) {
       try {
-        const buf = await fs.readFile(path.join(WEB_UI_DIST_DIR, "index.html"));
+        const indexPath = path.join(distDir, "index.html");
+        const buf = await fs.readFile(indexPath);
         res.statusCode = 200;
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end(buf);
@@ -83,6 +166,7 @@ async function tryServeStatic(req: http.IncomingMessage, res: http.ServerRespons
         return false;
       }
     }
+
     return false;
   }
 }
@@ -94,7 +178,7 @@ interface TerminalSession {
   name: string;
   cwd: string;
   history: string[];
-  process: ChildProcess | null;
+  process: any;
 }
 
 interface ChatSession {
@@ -110,6 +194,9 @@ type WebUIState = {
   provider: ProviderType;
   model: string;
   mode: AgentMode;
+  thinkingLevel: ThinkingLevel;
+  temperature: number;
+  maxTokens: number;
   uiMode: UIMode;
   terminals: Map<string, TerminalSession>;
   sessions: Map<string, ChatSession>;
@@ -125,11 +212,20 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function inferThinkingLevel(thinking: unknown): ThinkingLevel {
+  const cfg = thinking as { enabled?: boolean; budgetTokens?: number } | undefined;
+  if (!cfg?.enabled) return "off";
+  const budget = cfg.budgetTokens ?? 0;
+  if (budget <= 1024) return "low";
+  if (budget <= 4096) return "medium";
+  return "high";
+}
+
 function safeJson(res: http.ServerResponse, status: number, data: unknown): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.end(JSON.stringify(data));
 }
@@ -199,14 +295,32 @@ export async function startWebUI(options: {
   uiMode?: UIMode;
   openBrowser?: boolean;
 }): Promise<WebUIHandle> {
+  const distDir = await resolveWebUIDistDir();
+  if (!distDir) {
+    throw new Error(
+      "Web UI assets not found. Please build the web UI first:\n  pnpm run build:web-ui\n(or pnpm run build)"
+    );
+  }
+
+  // Validate that web UI is built before starting
+  const isBuilt = await validateWebUIBuilt(distDir);
+  if (!isBuilt) {
+    throw new Error(
+      "Web UI assets not found. Please build the web UI first:\n  pnpm run build:web-ui\n(or pnpm run build)"
+    );
+  }
+
   const initialSessionId = generateId();
   const initialTerminalId = generateId();
-  
+
   const state: WebUIState = {
     workspaceRoot: options.initialWorkspaceRoot,
     provider: options.provider,
     model: options.model,
     mode: options.mode,
+    thinkingLevel: inferThinkingLevel((options.baseConfig as any).thinking),
+    temperature: options.baseConfig.temperature ?? 0.7,
+    maxTokens: options.baseConfig.maxTokens ?? 16384,
     uiMode: options.uiMode ?? "web",
     terminals: new Map([[initialTerminalId, {
       id: initialTerminalId,
@@ -227,6 +341,7 @@ export async function startWebUI(options: {
 
   const rebuildAgent = async () => {
     const apiKey = await getApiKeyAsync(state.provider);
+    const supportsThinking = modelSupportsThinking(state.provider, state.model);
     return createAIAgent({
       ...options.baseConfig,
       apiKey: apiKey ?? options.baseConfig.apiKey,
@@ -234,15 +349,62 @@ export async function startWebUI(options: {
       model: state.model,
       mode: state.mode,
       workspaceRoot: state.workspaceRoot,
+      thinking: resolveThinkingConfig(state.thinkingLevel, supportsThinking),
+      temperature: state.temperature,
+      maxTokens: state.maxTokens,
     });
   };
 
   let agent = await rebuildAgent();
   setWorkspaceRoot(state.workspaceRoot);
 
-  let sseRes: http.ServerResponse | null = null;
-  const sseClients: Set<http.ServerResponse> = new Set();
-  let currentAbortController: AbortController | null = null;
+  const getConfigPayload = () => ({
+    workspaceRoot: state.workspaceRoot,
+    provider: state.provider,
+    model: state.model,
+    mode: state.mode,
+    thinkingLevel: state.thinkingLevel,
+    temperature: state.temperature,
+    maxTokens: state.maxTokens,
+    uiMode: state.uiMode,
+    currentSessionId: state.currentSessionId,
+    sessions: Array.from(state.sessions.values()).map((s) => ({
+      id: s.id,
+      name: s.name,
+      workspaceRoot: s.workspaceRoot,
+      createdAt: s.createdAt,
+    })),
+    terminals: Array.from(state.terminals.values()).map((t) => ({
+      id: t.id,
+      name: t.name,
+      cwd: t.cwd,
+    })),
+  });
+
+  let activeStreamSessionId: string | null = null;
+  const sseClientsBySession = new Map<string, Set<http.ServerResponse>>();
+  const abortControllerBySession = new Map<string, AbortController>();
+
+  const getSSEClients = (sessionId: string): Set<http.ServerResponse> => {
+    const existing = sseClientsBySession.get(sessionId);
+    if (existing) return existing;
+    const next = new Set<http.ServerResponse>();
+    sseClientsBySession.set(sessionId, next);
+    return next;
+  };
+
+  const writeEvent = (sessionId: string, event: unknown) => {
+    const clients = sseClientsBySession.get(sessionId);
+    if (!clients || clients.size === 0) return;
+
+    for (const client of clients) {
+      try {
+        client.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -250,7 +412,7 @@ export async function startWebUI(options: {
       if (req.method === "OPTIONS") {
         res.statusCode = 200;
         res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
         res.end();
         return;
@@ -258,46 +420,40 @@ export async function startWebUI(options: {
 
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
 
-      if (await tryServeStatic(req, res)) {
-        return;
-      }
-
-      // Serve HTML based on UI mode
-      if (req.method === "GET" && url.pathname === "/") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        const html = state.uiMode === "vibe" ? getVibeModeHTML() : getWebModeHTML();
-        res.end(html);
+      if (await tryServeStatic(distDir, req, res)) {
         return;
       }
 
       // Config endpoints
       if (req.method === "GET" && url.pathname === "/api/config") {
-        const currentSession = state.sessions.get(state.currentSessionId);
-        safeJson(res, 200, {
-          workspaceRoot: state.workspaceRoot,
-          provider: state.provider,
-          model: state.model,
-          mode: state.mode,
-          uiMode: state.uiMode,
-          currentSessionId: state.currentSessionId,
-          sessions: Array.from(state.sessions.values()).map(s => ({
-            id: s.id, name: s.name, workspaceRoot: s.workspaceRoot, createdAt: s.createdAt
-          })),
-          terminals: Array.from(state.terminals.values()).map(t => ({
-            id: t.id, name: t.name, cwd: t.cwd
-          })),
-        });
+        safeJson(res, 200, getConfigPayload());
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/api-key") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { provider?: string; apiKey?: string };
+        const provider = (body.provider ?? "").trim();
+        const apiKey = (body.apiKey ?? "").trim();
+        if (!provider || !apiKey) {
+          safeJson(res, 400, { error: "provider and apiKey required" });
+          return;
+        }
+        await setApiKey(provider, apiKey);
+        safeJson(res, 200, { ok: true });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/config") {
         const raw = await readBody(req);
-        const body = JSON.parse(raw || "{}") as { 
-          workspaceRoot?: string; 
+        const body = JSON.parse(raw || "{}") as {
+          workspaceRoot?: string;
           mode?: AgentMode;
           provider?: ProviderType;
           model?: string;
+          thinkingLevel?: ThinkingLevel;
+          temperature?: number;
+          maxTokens?: number;
         };
 
         let needsRebuild = false;
@@ -311,6 +467,10 @@ export async function startWebUI(options: {
               return;
             }
             state.workspaceRoot = candidate;
+            const currentSession = state.sessions.get(state.currentSessionId);
+            if (currentSession) {
+              currentSession.workspaceRoot = candidate;
+            }
             setWorkspaceRoot(candidate);
             needsRebuild = true;
           } catch {
@@ -334,11 +494,26 @@ export async function startWebUI(options: {
           needsRebuild = true;
         }
 
+        if (body.thinkingLevel && ["off", "low", "medium", "high"].includes(body.thinkingLevel)) {
+          state.thinkingLevel = body.thinkingLevel;
+          needsRebuild = true;
+        }
+
+        if (typeof body.temperature === "number" && Number.isFinite(body.temperature)) {
+          state.temperature = body.temperature;
+          needsRebuild = true;
+        }
+
+        if (typeof body.maxTokens === "number" && Number.isFinite(body.maxTokens) && body.maxTokens > 0) {
+          state.maxTokens = body.maxTokens;
+          needsRebuild = true;
+        }
+
         if (needsRebuild) {
           agent = await rebuildAgent();
         }
 
-        safeJson(res, 200, { ok: true });
+        safeJson(res, 200, getConfigPayload());
         return;
       }
 
@@ -363,6 +538,100 @@ export async function startWebUI(options: {
         return;
       }
 
+      // Slash commands list
+      if (req.method === "GET" && url.pathname === "/api/commands") {
+        const SLASH_COMMANDS = [
+          { name: "help", aliases: ["h", "?"], description: "Show help and shortcuts" },
+          { name: "models", aliases: ["m"], description: "Select AI model" },
+          { name: "sessions", aliases: ["s"], description: "Manage sessions" },
+          { name: "settings", description: "View/change settings" },
+          { name: "theme", description: "Select theme" },
+          { name: "thinking", aliases: ["t"], description: "Set thinking level" },
+          { name: "provider", aliases: ["p"], description: "Switch provider" },
+          { name: "bash", description: "Manage bash tool approvals" },
+          { name: "cost", description: "Show token cost for this session" },
+          { name: "index", aliases: ["idx"], description: "Index codebase for search" },
+          { name: "search", description: "Search indexed codebase" },
+          { name: "new", aliases: ["n"], description: "Create new session" },
+          { name: "reset", aliases: ["r"], description: "Reset current session" },
+          { name: "clear", aliases: ["c"], description: "Clear messages" },
+        ];
+
+        const query = url.searchParams.get("query") || "";
+        if (!query) {
+          safeJson(res, 200, { commands: SLASH_COMMANDS });
+          return;
+        }
+
+        const q = query.toLowerCase().replace(/^\/?/, "");
+        const matches = SLASH_COMMANDS.map((cmd) => {
+          const name = cmd.name.toLowerCase();
+          const aliases = (cmd.aliases || []).map((a) => a.toLowerCase());
+          const namePrefix = name.startsWith(q) ? 3 : 0;
+          const aliasPrefix = aliases.some((a) => a.startsWith(q)) ? 2 : 0;
+          const nameIncludes = name.includes(q) ? 1 : 0;
+          const aliasIncludes = aliases.some((a) => a.includes(q)) ? 1 : 0;
+          const score = namePrefix + aliasPrefix + nameIncludes + aliasIncludes;
+          return { cmd, score };
+        })
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score || a.cmd.name.localeCompare(b.cmd.name))
+          .map((x) => x.cmd);
+
+        safeJson(res, 200, { commands: matches });
+        return;
+      }
+
+      // File autocomplete for @ mentions
+      if (req.method === "GET" && url.pathname === "/api/files/autocomplete") {
+        const query = url.searchParams.get("query") || "";
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
+        const session = state.sessions.get(sessionId);
+
+        if (!session || !query) {
+          safeJson(res, 200, { files: [] });
+          return;
+        }
+
+        const workspaceRoot = session.workspaceRoot;
+        const results: string[] = [];
+
+        try {
+          async function searchDir(dir: string, query: string, maxDepth = 3): Promise<void> {
+            if (maxDepth <= 0) return;
+
+            try {
+              const entries = await fs.readdir(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                if (entry.name.startsWith(".")) continue;
+                if (entry.name === "node_modules") continue;
+                if (entry.name === "dist" || entry.name === "build") continue;
+
+                const fullPath = path.join(dir, entry.name);
+                const relPath = path.relative(workspaceRoot, fullPath);
+
+                if (entry.isDirectory()) {
+                  await searchDir(fullPath, query, maxDepth - 1);
+                } else if (entry.isFile()) {
+                  if (relPath.toLowerCase().includes(query.toLowerCase())) {
+                    results.push(relPath);
+                    if (results.length >= 20) return;
+                  }
+                }
+              }
+            } catch {
+              // Ignore permission errors
+            }
+          }
+
+          await searchDir(workspaceRoot, query);
+          safeJson(res, 200, { files: results.slice(0, 20) });
+        } catch {
+          safeJson(res, 200, { files: [] });
+        }
+        return;
+      }
+
       // Browse directories
       if (req.method === "GET" && url.pathname === "/api/browse") {
         const dirPath = url.searchParams.get("path") || os.homedir();
@@ -379,23 +648,36 @@ export async function startWebUI(options: {
 
       // File System API - List files
       if (req.method === "GET" && url.pathname === "/api/files") {
-        const reqPath = url.searchParams.get("path") || state.workspaceRoot;
-        const resolvedPath = path.resolve(reqPath);
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
+        const session = state.sessions.get(sessionId);
+        if (!session) {
+          safeJson(res, 404, { error: "Session not found" });
+          return;
+        }
 
-        // Build hierarchical file tree
-        async function buildTree(dir: string, relativeTo: string): Promise<Array<{ name: string; type: "file" | "directory"; path: string; size?: number; children?: any[] }>> {
+        const workspaceRoot = session.workspaceRoot;
+        const reqPath = url.searchParams.get("path") || ".";
+        const resolvedPath = path.resolve(path.join(workspaceRoot, reqPath));
+
+        const relativePath = path.relative(workspaceRoot, resolvedPath);
+        if (relativePath.startsWith("..")) {
+          safeJson(res, 403, { error: "Access denied" });
+          return;
+        }
+
+        async function buildTree(dir: string, relativeTo: string): Promise<any[]> {
           try {
             const entries = await fs.readdir(dir, { withFileTypes: true });
-            const results: Array<{ name: string; type: "file" | "directory"; path: string; size?: number; children?: any[] }> = [];
+            const results: any[] = [];
 
             for (const entry of entries) {
-              if (entry.name.startsWith('.')) continue; // Skip hidden files
-              if (entry.name === "node_modules") continue; // Skip node_modules
-              if (entry.name === "dist" || entry.name === "build") continue; // Skip build dirs
+              if (entry.name.startsWith('.')) continue;
+              if (entry.name === "node_modules") continue;
+              if (entry.name === "dist" || entry.name === "build") continue;
 
               const fullPath = path.join(dir, entry.name);
               const relPath = path.relative(relativeTo, fullPath);
-              const item: { name: string; type: "file" | "directory"; path: string; size?: number; children?: any[] } = {
+              const item: any = {
                 name: entry.name,
                 type: entry.isDirectory() ? "directory" : "file",
                 path: relPath,
@@ -420,7 +702,7 @@ export async function startWebUI(options: {
           }
         }
 
-        const files = await buildTree(resolvedPath, resolvedPath);
+        const files = await buildTree(resolvedPath, workspaceRoot);
         safeJson(res, 200, { files });
         return;
       }
@@ -433,10 +715,17 @@ export async function startWebUI(options: {
           return;
         }
 
-        const resolvedPath = path.resolve(path.join(state.workspaceRoot, reqPath));
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
+        const session = state.sessions.get(sessionId);
+        if (!session) {
+          safeJson(res, 404, { error: "Session not found" });
+          return;
+        }
+        const workspaceRoot = session.workspaceRoot;
+
+        const resolvedPath = path.resolve(path.join(workspaceRoot, reqPath));
         try {
-          // Ensure path is within workspace
-          const relativePath = path.relative(state.workspaceRoot, resolvedPath);
+          const relativePath = path.relative(workspaceRoot, resolvedPath);
           if (relativePath.startsWith("..")) {
             safeJson(res, 403, { error: "Access denied" });
             return;
@@ -461,16 +750,22 @@ export async function startWebUI(options: {
         const raw = await readBody(req);
         const body = JSON.parse(raw || "{}") as { content: string };
 
-        const resolvedPath = path.resolve(path.join(state.workspaceRoot, reqPath));
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
+        const session = state.sessions.get(sessionId);
+        if (!session) {
+          safeJson(res, 404, { error: "Session not found" });
+          return;
+        }
+        const workspaceRoot = session.workspaceRoot;
+
+        const resolvedPath = path.resolve(path.join(workspaceRoot, reqPath));
         try {
-          // Ensure path is within workspace
-          const relativePath = path.relative(state.workspaceRoot, resolvedPath);
+          const relativePath = path.relative(workspaceRoot, resolvedPath);
           if (relativePath.startsWith("..")) {
             safeJson(res, 403, { error: "Access denied" });
             return;
           }
 
-          // Ensure directory exists
           const dir = path.dirname(resolvedPath);
           await fs.mkdir(dir, { recursive: true });
 
@@ -482,94 +777,12 @@ export async function startWebUI(options: {
         return;
       }
 
-      // File System API - Delete file
-      if (req.method === "DELETE" && url.pathname === "/api/files") {
-        const reqPath = url.searchParams.get("path");
-        if (!reqPath) {
-          safeJson(res, 400, { error: "path parameter required" });
-          return;
-        }
-
-        const resolvedPath = path.resolve(path.join(state.workspaceRoot, reqPath));
-        try {
-          // Ensure path is within workspace
-          const relativePath = path.relative(state.workspaceRoot, resolvedPath);
-          if (relativePath.startsWith("..")) {
-            safeJson(res, 403, { error: "Access denied" });
-            return;
-          }
-
-          await fs.unlink(resolvedPath);
-          safeJson(res, 200, { ok: true });
-        } catch (e: any) {
-          safeJson(res, 500, { error: `Failed to delete file: ${e.message}` });
-        }
-        return;
-      }
-
-      // File System API - Create directory
-      if (req.method === "POST" && url.pathname === "/api/files/mkdir") {
-        const raw = await readBody(req);
-        const body = JSON.parse(raw || "{}") as { path: string };
-
-        if (!body.path) {
-          safeJson(res, 400, { error: "path parameter required" });
-          return;
-        }
-
-        const resolvedPath = path.resolve(path.join(state.workspaceRoot, body.path));
-        try {
-          // Ensure path is within workspace
-          const relativePath = path.relative(state.workspaceRoot, resolvedPath);
-          if (relativePath.startsWith("..")) {
-            safeJson(res, 403, { error: "Access denied" });
-            return;
-          }
-
-          await fs.mkdir(resolvedPath, { recursive: true });
-          safeJson(res, 200, { ok: true });
-        } catch (e: any) {
-          safeJson(res, 500, { error: `Failed to create directory: ${e.message}` });
-        }
-        return;
-      }
-
-      // File System API - Move/rename file
-      if (req.method === "POST" && url.pathname === "/api/files/move") {
-        const raw = await readBody(req);
-        const body = JSON.parse(raw || "{}") as { from: string; to: string };
-
-        if (!body.from || !body.to) {
-          safeJson(res, 400, { error: "from and to parameters required" });
-          return;
-        }
-
-        const fromPath = path.resolve(path.join(state.workspaceRoot, body.from));
-        const toPath = path.resolve(path.join(state.workspaceRoot, body.to));
-
-        try {
-          // Ensure paths are within workspace
-          const fromRelative = path.relative(state.workspaceRoot, fromPath);
-          const toRelative = path.relative(state.workspaceRoot, toPath);
-          if (fromRelative.startsWith("..") || toRelative.startsWith("..")) {
-            safeJson(res, 403, { error: "Access denied" });
-            return;
-          }
-
-          await fs.rename(fromPath, toPath);
-          safeJson(res, 200, { ok: true });
-        } catch (e: any) {
-          safeJson(res, 500, { error: `Failed to move file: ${e.message}` });
-        }
-        return;
-      }
-
       // Sessions management
       if (req.method === "GET" && url.pathname === "/api/sessions") {
         safeJson(res, 200, {
           currentSessionId: state.currentSessionId,
           sessions: Array.from(state.sessions.values()).map(s => ({
-            id: s.id, name: s.name, workspaceRoot: s.workspaceRoot, 
+            id: s.id, name: s.name, workspaceRoot: s.workspaceRoot,
             messageCount: s.messages.length, createdAt: s.createdAt
           })),
         });
@@ -608,7 +821,7 @@ export async function startWebUI(options: {
         state.workspaceRoot = session.workspaceRoot;
         setWorkspaceRoot(session.workspaceRoot);
         agent = await rebuildAgent();
-        safeJson(res, 200, { ok: true, session: { id: session.id, name: session.name } });
+        safeJson(res, 200, { ok: true });
         return;
       }
 
@@ -624,55 +837,18 @@ export async function startWebUI(options: {
         return;
       }
 
-      // Terminals management
-      if (req.method === "GET" && url.pathname === "/api/terminals") {
-        safeJson(res, 200, {
-          terminals: Array.from(state.terminals.values()).map(t => ({
-            id: t.id, name: t.name, cwd: t.cwd, historyLength: t.history.length
-          })),
-        });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/terminals") {
-        const raw = await readBody(req);
-        const body = JSON.parse(raw || "{}") as { name?: string; cwd?: string };
-        const id = generateId();
-        const terminal: TerminalSession = {
-          id,
-          name: body.name || `Terminal ${state.terminals.size + 1}`,
-          cwd: body.cwd || state.workspaceRoot,
-          history: [],
-          process: null,
-        };
-        state.terminals.set(id, terminal);
-        safeJson(res, 200, { terminal: { id: terminal.id, name: terminal.name, cwd: terminal.cwd } });
-        return;
-      }
-
-      if (req.method === "DELETE" && url.pathname.startsWith("/api/terminals/")) {
-        const terminalId = url.pathname.split("/").pop();
-        if (terminalId && state.terminals.has(terminalId)) {
-          const term = state.terminals.get(terminalId);
-          if (term?.process) {
-            try { term.process.kill(); } catch { /* ignore */ }
-          }
-          state.terminals.delete(terminalId);
-        }
-        safeJson(res, 200, { ok: true });
-        return;
-      }
-
       // SSE events endpoint
       if (req.method === "GET" && url.pathname === "/api/events") {
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
         res.statusCode = 200;
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.write("retry: 1000\n\n");
-        sseRes = res;
-        sseClients.add(res);
+
+        const clients = getSSEClients(sessionId);
+        clients.add(res);
 
         const keepAlive = setInterval(() => {
           try { res.write(`event: ping\ndata: {}\n\n`); } catch { /* ignore */ }
@@ -680,35 +856,52 @@ export async function startWebUI(options: {
 
         req.on("close", () => {
           clearInterval(keepAlive);
-          sseClients.delete(res);
-          if (sseRes === res) sseRes = null;
+          clients.delete(res);
         });
         return;
       }
 
       // Abort/Stop endpoint
       if (req.method === "POST" && url.pathname === "/api/abort") {
-        if (currentAbortController) {
-          currentAbortController.abort();
-          currentAbortController = null;
+        const raw = await readBody(req);
+        let sessionId = state.currentSessionId;
+        try {
+          const body = JSON.parse(raw || "{}") as { sessionId?: string };
+          sessionId = body.sessionId || sessionId;
+        } catch {
+          // ignore
+        }
+
+        const controller = abortControllerBySession.get(sessionId);
+        if (controller) {
+          controller.abort();
+          abortControllerBySession.delete(sessionId);
         }
         safeJson(res, 200, { ok: true });
         return;
       }
 
       // Message endpoint
+      if (req.method === "GET" && url.pathname === "/api/messages") {
+        const sessionId = url.searchParams.get("sessionId") || state.currentSessionId;
+        const session = state.sessions.get(sessionId);
+
+        if (!session) {
+          safeJson(res, 404, { error: "Session not found" });
+          return;
+        }
+
+        safeJson(res, 200, { messages: session.messages });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/api/message") {
         const raw = await readBody(req);
         const body = JSON.parse(raw || "{}") as { message?: string; sessionId?: string };
         const message = (body.message ?? "").trim();
-        
+
         if (!message) {
           safeJson(res, 400, { error: "message required" });
-          return;
-        }
-
-        if (!sseRes) {
-          safeJson(res, 409, { error: "no event stream connected" });
           return;
         }
 
@@ -719,48 +912,65 @@ export async function startWebUI(options: {
           return;
         }
 
+        if (activeStreamSessionId && activeStreamSessionId !== sessionId) {
+          safeJson(res, 409, { error: "another session is currently streaming" });
+          return;
+        }
+
+        if (getSSEClients(sessionId).size === 0) {
+          safeJson(res, 409, { error: "no event stream connected" });
+          return;
+        }
+
+        if (state.workspaceRoot !== session.workspaceRoot || state.currentSessionId !== sessionId) {
+          state.currentSessionId = sessionId;
+          state.workspaceRoot = session.workspaceRoot;
+          setWorkspaceRoot(session.workspaceRoot);
+          agent = await rebuildAgent();
+        }
+
         session.messages.push({ role: "user" as const, content: message });
         safeJson(res, 200, { ok: true });
 
-        currentAbortController = new AbortController();
-        const abortSignal = currentAbortController.signal;
+        activeStreamSessionId = sessionId;
 
-        const writeEvent = (event: unknown) => {
-          try { sseRes?.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* ignore */ }
-        };
+        const controller = new AbortController();
+        abortControllerBySession.set(sessionId, controller);
+        const abortSignal = controller.signal;
 
         let responseText = "";
         try {
           for await (const event of agent.stream(session.messages)) {
             if (abortSignal.aborted) {
-              writeEvent({ type: "aborted", data: {} });
+              writeEvent(sessionId, { type: "aborted", data: {} });
               break;
             }
             if (event.type === "text-delta") {
               const text = (event.data as any)?.text ?? "";
               responseText += text;
-              writeEvent({ type: "text-delta", data: { text } });
+              writeEvent(sessionId, { type: "text-delta", data: { text } });
             } else if (event.type === "tool-call") {
-              writeEvent({ type: "tool-call", data: event.data });
+              writeEvent(sessionId, { type: "tool-call", data: event.data });
             } else if (event.type === "tool-result") {
-              writeEvent({ type: "tool-result", data: event.data });
+              writeEvent(sessionId, { type: "tool-result", data: event.data });
             } else if (event.type === "reasoning") {
-              writeEvent({ type: "thinking", data: event.data });
+              writeEvent(sessionId, { type: "thinking", data: event.data });
             } else if (event.type === "error") {
-              writeEvent({ type: "error", data: event.data });
+              writeEvent(sessionId, { type: "error", data: event.data });
             }
           }
-          
+
           if (responseText) {
             session.messages.push({ role: "assistant" as const, content: responseText });
           }
-          writeEvent({ type: "complete", data: {} });
+          writeEvent(sessionId, { type: "complete", data: {} });
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            writeEvent({ type: "error", data: { message: e?.message ?? String(e) } });
+            writeEvent(sessionId, { type: "error", data: { message: e?.message ?? String(e) } });
           }
         } finally {
-          currentAbortController = null;
+          abortControllerBySession.delete(sessionId);
+          if (activeStreamSessionId === sessionId) activeStreamSessionId = null;
         }
         return;
       }
@@ -770,7 +980,7 @@ export async function startWebUI(options: {
         const raw = await readBody(req);
         const body = JSON.parse(raw || "{}") as { command?: string; terminalId?: string; cwd?: string };
         const command = (body.command ?? "").trim();
-        
+
         if (!command) {
           safeJson(res, 400, { error: "command required" });
           return;
@@ -780,7 +990,6 @@ export async function startWebUI(options: {
         const terminal = terminalId ? state.terminals.get(terminalId) : null;
         const cwd = body.cwd || terminal?.cwd || state.workspaceRoot;
 
-        // Handle cd command
         if (command.startsWith("cd ")) {
           const newDir = command.slice(3).trim().replace(/^["']|["']$/g, "");
           const resolved = path.resolve(cwd, newDir);
@@ -809,16 +1018,47 @@ export async function startWebUI(options: {
         return;
       }
 
-      // Terminal history
-      if (req.method === "GET" && url.pathname.startsWith("/api/terminal/") && url.pathname.endsWith("/history")) {
-        const parts = url.pathname.split("/");
-        const terminalId = parts[3];
-        const terminal = state.terminals.get(terminalId || "");
-        if (!terminal) {
-          safeJson(res, 404, { error: "Terminal not found" });
+      // Bash approval status
+      if (req.method === "GET" && url.pathname === "/api/bash/status") {
+        const status = await getBashApprovalStatus();
+        const pending = await getPendingBashApprovals();
+        safeJson(res, 200, {
+          yolo: status.yolo,
+          allowPrefixes: status.allowPrefixes,
+          pending: pending.map((p) => ({
+            id: p.id,
+            command: p.command,
+            workdir: p.workdir,
+          })),
+        });
+        return;
+      }
+
+      // Bash approve command
+      if (req.method === "POST" && url.pathname === "/api/bash/approve") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { approvalId?: string };
+        const approvalId = body.approvalId;
+        if (!approvalId) {
+          safeJson(res, 400, { error: "approvalId required" });
           return;
         }
-        safeJson(res, 200, { history: terminal.history, cwd: terminal.cwd });
+        const result = await approveBashCommandOnce(approvalId);
+        safeJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+
+      // Bash deny command
+      if (req.method === "POST" && url.pathname === "/api/bash/deny") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { approvalId?: string };
+        const approvalId = body.approvalId;
+        if (!approvalId) {
+          safeJson(res, 400, { error: "approvalId required" });
+          return;
+        }
+        const result = await cancelBashApproval(approvalId, "user denied");
+        safeJson(res, result.ok ? 200 : 400, result);
         return;
       }
 
@@ -858,6 +1098,3 @@ export async function startWebUI(options: {
     },
   };
 }
-
-// Export for backwards compatibility
-export { startWebUI as startVibeUI };

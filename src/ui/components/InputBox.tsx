@@ -1,24 +1,34 @@
+/**
+ * Input box component for user input.
+ * Refactored to use smaller, focused components.
+ */
+
 import React from "react";
 import { Box, Text } from "ink";
 import figures from "figures";
 import type { AgentMode as CodingAgentMode } from "../../ai-agent.js";
-import { MODE_COLORS, MODES, type SlashCommand } from "../types.js";
-import { clamp } from "../utils.js";
+import type { SlashCommand, ThemeColors } from "../types.js";
+import { Autocomplete } from "./input/Autocomplete.js";
+import { ModeSelector } from "./input/ModeSelector.js";
 
-interface InputBoxProps {
+export interface InputBoxProps {
   value: string;
   cursorIndex: number;
   mode: CodingAgentMode;
+  provider?: string;
+  model?: string;
   isThinking: boolean;
-  elapsedTime: number;
   showAutocomplete: boolean;
   autocompleteMatches: SlashCommand[];
   autocompleteIndex: number;
+  autocompletePrefix?: string;
   attachedImages?: string[];
-  maxLines?: number; // Max visible lines before scrolling within input
+  maxLines?: number;
+  themeColors: ThemeColors;
+  hideComposer?: boolean;
 }
 
-export const InputBox: React.FC<InputBoxProps> = ({
+const InputBoxImpl: React.FC<InputBoxProps> = ({
   value,
   cursorIndex,
   mode,
@@ -26,19 +36,21 @@ export const InputBox: React.FC<InputBoxProps> = ({
   showAutocomplete,
   autocompleteMatches,
   autocompleteIndex,
+  autocompletePrefix = "/",
   attachedImages = [],
-  maxLines = 8, // Default max 8 visible lines
+  maxLines = 8,
+  themeColors,
+  hideComposer = false,
 }) => {
-  const maxItems = 5;
-  const windowStart = clamp(
-    autocompleteIndex - Math.floor(maxItems / 2),
-    0,
-    Math.max(0, autocompleteMatches.length - maxItems),
-  );
-  const items = autocompleteMatches.slice(windowStart, windowStart + maxItems);
-
   const cursor = isThinking ? "" : "│";
   const safeCursorIndex = Math.max(0, Math.min(cursorIndex, value.length));
+
+  const modeColor =
+    mode === "agent"
+      ? themeColors.primary
+      : mode === "plan"
+        ? themeColors.warning
+        : themeColors.success;
 
   // Insert cursor into the value
   const displayValue =
@@ -54,7 +66,6 @@ export const InputBox: React.FC<InputBoxProps> = ({
   let cursorLine = 0;
   let charCount = 0;
   for (let i = 0; i < allLines.length; i++) {
-    // +1 for the newline character (except last line)
     const lineLength = allLines[i]!.length + (i < allLines.length - 1 ? 1 : 0);
     if (charCount + lineLength > safeCursorIndex) {
       cursorLine = i;
@@ -70,10 +81,8 @@ export const InputBox: React.FC<InputBoxProps> = ({
   let showBottomIndicator = false;
 
   if (totalLines <= maxLines) {
-    // All lines fit
     visibleLines = allLines;
   } else {
-    // Need to scroll - keep cursor line visible
     const halfWindow = Math.floor((maxLines - 1) / 2);
     let startLine = Math.max(0, cursorLine - halfWindow);
     let endLine = startLine + maxLines;
@@ -88,132 +97,125 @@ export const InputBox: React.FC<InputBoxProps> = ({
     showBottomIndicator = endLine < totalLines;
   }
 
-  // Calculate dynamic height (min 1, max maxLines)
-  const inputHeight = Math.min(totalLines, maxLines);
-
   return (
     <Box flexDirection="column">
       {/* Autocomplete dropdown */}
       {showAutocomplete && (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="gray"
-          paddingX={1}
-          marginX={1}
-        >
-          {items.map((cmd, idx) => {
-            const actualIdx = windowStart + idx;
-            const selected = actualIdx === autocompleteIndex;
-            return (
-              <Text
-                key={cmd.name}
-                color={selected ? "cyan" : "white"}
-                bold={selected}
-              >
-                {selected ? figures.pointer : " "} /{cmd.name}{" "}
-                <Text color="gray" dimColor>
-                  - {cmd.description}
-                </Text>
-              </Text>
-            );
-          })}
-          <Text color="gray" dimColor>
-            Tab/Enter to select • Esc to close
-          </Text>
-        </Box>
+        <Autocomplete
+          matches={autocompleteMatches}
+          selectedIndex={autocompleteIndex}
+          prefix={autocompletePrefix}
+          themeColors={themeColors}
+        />
       )}
 
       {/* Attached images indicator */}
-      {attachedImages.length > 0 && (
+      {!hideComposer && attachedImages.length > 0 && (
         <Box paddingX={2} marginBottom={0}>
-          <Text color="magenta">
-            {figures.circleFilled} {attachedImages.length} image
-            {attachedImages.length > 1 ? "s" : ""} attached
+          <Text color={themeColors.secondary}>
+            {figures.circleFilled}{" "}
+            {attachedImages.map((_, i) => `[Image ${i + 1}]`).join(" ")}
           </Text>
-          <Text color="gray" dimColor>
+          <Text color={themeColors.textMuted} dimColor>
             {" "}
-            ({attachedImages.map((p) => p.split("/").pop()).join(", ")})
+            (
+            {attachedImages
+              .map((p, i) =>
+                p.startsWith("data:image/")
+                  ? `clipboard-${i + 1}`
+                  : p.split("/").pop()
+              )
+              .join(", ")}
+            )
           </Text>
         </Box>
       )}
 
-      {/* Input box - expands with content */}
-      <Box
-        borderStyle="round"
-        borderColor={isThinking ? "yellow" : MODE_COLORS[mode]}
-        paddingX={1}
-        marginX={1}
-        flexDirection="column"
-      >
-        {/* Top scroll indicator */}
-        {showTopIndicator && (
-          <Box>
-            <Text color="gray" dimColor>
-              {figures.arrowUp} {totalLines - visibleLines.length} more lines
-              above
-            </Text>
-          </Box>
-        )}
-
-        {/* Visible lines */}
-        {visibleLines.map((line, idx) => (
-          <Box key={idx} flexDirection="row">
-            {idx === 0 && !showTopIndicator ? (
-              <Text color={MODE_COLORS[mode]}>{figures.pointer} </Text>
-            ) : (
-              <Text color={MODE_COLORS[mode]}>{"  "}</Text>
-            )}
-            {line.length === 0 && value.length === 0 ? (
-              <Text>
-                <Text color="gray">{cursor}</Text>
-                <Text color="gray" dimColor>
-                  {isThinking ? " thinking..." : ""}
-                </Text>
+      {/* Input box - hidden when selector is open */}
+      {!hideComposer && (
+        <Box
+          borderStyle="round"
+          borderColor={isThinking ? themeColors.warning : modeColor}
+          paddingX={1}
+          marginX={1}
+          flexDirection="column"
+        >
+          {/* Top scroll indicator */}
+          {showTopIndicator && (
+            <Box>
+              <Text color={themeColors.textMuted} dimColor>
+                {figures.arrowUp} {totalLines - visibleLines.length} more lines
+                above
               </Text>
-            ) : (
-              <Text>{line || " "}</Text>
-            )}
-          </Box>
-        ))}
+            </Box>
+          )}
 
-        {/* Bottom scroll indicator */}
-        {showBottomIndicator && (
-          <Box>
-            <Text color="gray" dimColor>
-              {figures.arrowDown}{" "}
-              {totalLines - visibleLines.length - (showTopIndicator ? 1 : 0)}{" "}
-              more lines below
-            </Text>
-          </Box>
-        )}
+          {/* Visible lines */}
+          {visibleLines.map((line, idx) => (
+            <Box key={idx} flexDirection="row">
+              {idx === 0 && !showTopIndicator ? (
+                <Text color={modeColor}>{figures.pointer} </Text>
+              ) : (
+                <Text color={modeColor}>{"  "}</Text>
+              )}
+              {line.length === 0 && value.length === 0 ? (
+                <Text>
+                  <Text color={themeColors.textDim}>{cursor}</Text>
+                  <Text color={themeColors.textDim} dimColor>
+                    {isThinking ? " thinking..." : ""}
+                  </Text>
+                </Text>
+              ) : (
+                <Text>{line || " "}</Text>
+              )}
+            </Box>
+          ))}
 
-        {/* Line count indicator for multiline */}
-        {totalLines > 1 && (
-          <Box justifyContent="flex-end">
-            <Text color="gray" dimColor>
-              line {cursorLine + 1}/{totalLines} • Ctrl+Enter for newline
-            </Text>
-          </Box>
-        )}
-      </Box>
+          {/* Bottom scroll indicator */}
+          {showBottomIndicator && (
+            <Box>
+              <Text color={themeColors.textMuted} dimColor>
+                {figures.arrowDown}{" "}
+                {totalLines - visibleLines.length - (showTopIndicator ? 1 : 0)}{" "}
+                more lines below
+              </Text>
+            </Box>
+          )}
 
-      {/* Mode selector - minimal */}
-      <Box paddingX={2} gap={2}>
-        {MODES.map((m) => (
-          <Text
-            key={m}
-            color={m === mode ? MODE_COLORS[m] : "gray"}
-            dimColor={m !== mode}
-            bold={m === mode}
-          >
-            {m === mode ? figures.circleFilled : figures.circle} {m}
-          </Text>
-        ))}
-        <Text color="gray" dimColor>
-          [Tab]
-        </Text>
-      </Box>
+          {/* Line count indicator for multiline */}
+          {totalLines > 1 && (
+            <Box justifyContent="flex-end">
+              <Text color={themeColors.textMuted} dimColor>
+                line {cursorLine + 1}/{totalLines} • Ctrl+Enter for newline
+              </Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Mode selector */}
+      <ModeSelector mode={mode} themeColors={themeColors} />
     </Box>
   );
 };
+
+// Memoize InputBox to prevent unnecessary re-renders and expensive recalculations
+export const InputBox = React.memo(
+  InputBoxImpl,
+  (prev, next) => {
+    return (
+      prev.value === next.value &&
+      prev.cursorIndex === next.cursorIndex &&
+      prev.mode === next.mode &&
+      prev.isThinking === next.isThinking &&
+      prev.showAutocomplete === next.showAutocomplete &&
+      prev.autocompleteMatches === next.autocompleteMatches &&
+      prev.autocompleteIndex === next.autocompleteIndex &&
+      prev.autocompletePrefix === next.autocompletePrefix &&
+      prev.attachedImages === next.attachedImages &&
+      prev.maxLines === next.maxLines &&
+      prev.themeColors === next.themeColors &&
+      prev.hideComposer === next.hideComposer
+    );
+  }
+);

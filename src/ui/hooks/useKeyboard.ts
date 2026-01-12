@@ -24,6 +24,8 @@ interface UseKeyboardOptions {
   onModalChange: (modal: ModalType) => void;
   onModalSelectionChange: (index: number) => void;
   onModalSelect: () => void;
+  onModalSearchInput: (char: string) => void;
+  onModalSearchBackspace: () => void;
   onModeChange: (mode: CodingAgentMode) => void;
   onStatusChange: (status: string) => void;
   onAutocompleteToggle: (show: boolean) => void;
@@ -58,6 +60,8 @@ export function useKeyboard(options: UseKeyboardOptions) {
     onModalChange,
     onModalSelectionChange,
     onModalSelect,
+    onModalSearchInput,
+    onModalSearchBackspace,
     onModeChange,
     onStatusChange,
     onAutocompleteToggle,
@@ -120,6 +124,19 @@ export function useKeyboard(options: UseKeyboardOptions) {
       if (key.return) {
         onModalSelect();
         return;
+      }
+      // Handle typing in searchable modals (models, provider)
+      const isSearchableModal = activeModal === "models" || activeModal === "provider";
+      if (isSearchableModal) {
+        if (key.backspace || key.delete) {
+          onModalSearchBackspace();
+          return;
+        }
+        // Allow typing printable characters
+        if (inputKey && inputKey.length === 1 && !key.ctrl && !key.meta) {
+          onModalSearchInput(inputKey);
+          return;
+        }
       }
       return;
     }

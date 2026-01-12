@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fileSystemAPI, getFileIcon, FileEntry } from "@/lib/file-system";
@@ -7,10 +7,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface FileTreeProps {
   onFileSelect?: (path: string, content: string) => void;
   selectedPath?: string;
+  sessionId?: string;
   className?: string;
 }
 
-export function FileTree({ onFileSelect, selectedPath, className }: FileTreeProps) {
+export function FileTree({ onFileSelect, selectedPath, sessionId, className }: FileTreeProps) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["."]));
   const [loading, setLoading] = useState(false);
@@ -18,19 +19,20 @@ export function FileTree({ onFileSelect, selectedPath, className }: FileTreeProp
   const loadFiles = useCallback(async (path: string = ".") => {
     setLoading(true);
     try {
-      const result = await fileSystemAPI.listFiles(path);
+      const result = await fileSystemAPI.listFiles(path, sessionId);
       setFiles(result);
     } catch (e) {
       console.error("Failed to load files:", e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionId]);
 
   // Load initial files on mount
-  useState(() => {
+  useEffect(() => {
+    setExpanded(new Set(["."]));
     loadFiles();
-  });
+  }, [loadFiles, sessionId]);
 
   const toggleExpand = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -49,13 +51,13 @@ export function FileTree({ onFileSelect, selectedPath, className }: FileTreeProp
       toggleExpand(entry.path);
     } else if (onFileSelect) {
       try {
-        const content = await fileSystemAPI.readFile(entry.path);
+        const content = await fileSystemAPI.readFile(entry.path, sessionId);
         onFileSelect(entry.path, content);
       } catch (e) {
         console.error("Failed to read file:", e);
       }
     }
-  }, [onFileSelect, toggleExpand]);
+  }, [onFileSelect, sessionId, toggleExpand]);
 
   return (
     <div className={cn("flex h-full flex-col", className)}>

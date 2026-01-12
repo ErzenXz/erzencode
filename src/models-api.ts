@@ -139,7 +139,6 @@ export async function getModelsDevModelsForProvider(
     bedrock: ["bedrock", "amazon-bedrock"],
     cerebras: ["cerebras"],
     nvidia: ["nvidia"],
-    zai: ["zai", "z-ai", "z.ai"],
     sambanova: ["sambanova"],
     lambda: ["lambda", "lambdalabs"],
     hyperbolic: ["hyperbolic"],
@@ -150,6 +149,12 @@ export async function getModelsDevModelsForProvider(
     avian: ["avian", "avianio"],
     chutes: ["chutes", "chutesai"],
     targon: ["targon"],
+    // z.ai providers
+    // models.dev currently lists z.ai models under `zai-coding-plan`.
+    // Map `zai` here as a fallback so dynamic model loading (and thinking flags)
+    // work even if the user selected the non-coding endpoint.
+    zai: ["zai", "z-ai", "z.ai", "zai-coding-plan"],
+    "zai-coding-plan": ["zai-coding-plan", "zai", "z-ai", "z.ai"],
   };
 
   const mappedIds = providerMapping[providerId] ?? [providerId];

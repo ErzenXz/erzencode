@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { useConfig } from "@/hooks/useConfig";
 import { cn } from "@/lib/utils";
+import { useEffect } from "react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
@@ -16,11 +17,20 @@ interface HeaderProps {
 }
 
 export function Header({ onOpenSettings, className }: HeaderProps) {
-  const { config, providers, loadModels, setProvider, setModel } = useConfig();
+  const { config, providers, models, loadModels, setProvider, setModel } = useConfig();
+
+  useEffect(() => {
+    if (!config?.provider) return;
+    if (models.length > 0) return;
+    void loadModels(config.provider);
+  }, [config?.provider, loadModels, models.length]);
 
   const handleProviderChange = async (value: string) => {
-    await setProvider(value);
-    await loadModels(value);
+    const nextConfig = await setProvider(value);
+    const nextModels = await loadModels(value);
+    if (nextModels.length > 0 && !nextModels.includes(nextConfig.model)) {
+      await setModel(nextModels[0]!);
+    }
   };
 
   const handleModelChange = async (value: string) => {
@@ -75,8 +85,15 @@ export function Header({ onOpenSettings, className }: HeaderProps) {
             <SelectValue placeholder="Model" />
           </SelectTrigger>
           <SelectContent>
-            {/* Models loaded by provider - will be populated dynamically */}
-            <SelectItem value={config.model}>{config.model}</SelectItem>
+            {models.length > 0 ? (
+              models.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))
+            ) : (
+              <SelectItem value={config.model}>{config.model}</SelectItem>
+            )}
           </SelectContent>
         </Select>
 

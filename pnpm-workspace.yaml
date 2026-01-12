@@ -1,0 +1,4 @@
+onlyBuiltDependencies:
+  - '@makeomatic/ffi-napi'
+  - '@makeomatic/ref-napi'
+  - esbuild

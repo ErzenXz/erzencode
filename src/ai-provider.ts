@@ -16,6 +16,7 @@ import {
   clearCache,
 } from "./ai-middleware.js";
 import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic, type AnthropicProvider } from "@ai-sdk/anthropic";
 import {
   createGoogleGenerativeAI,
@@ -257,23 +258,29 @@ export function createProvider(config: AIProviderConfig): LanguageModel {
         break;
 
       case "zai":
-        // z.ai Normal API - OpenAI-compatible
-        providerInstance = createOpenAI({
+        // z.ai Normal API - OpenAI-compatible (includes reasoning_content)
+        providerInstance = createOpenAICompatible({
+          name: "zai",
           apiKey: resolvedApiKey,
           baseURL: resolvedBaseUrl || "https://api.z.ai/api/paas/v4",
-        });
+        }) as any;
         break;
 
       case "zai-coding-plan":
-        // z.ai Coding Plans - OpenAI-compatible API for coding workflows
-        providerInstance = createOpenAI({
+        // z.ai Coding Plans - OpenAI-compatible API for coding workflows (includes reasoning_content)
+        providerInstance = createOpenAICompatible({
+          name: "zai-coding-plan",
           apiKey: resolvedApiKey,
           baseURL: resolvedBaseUrl || "https://api.z.ai/api/coding/paas/v4",
-        });
+        }) as any;
         break;
 
       default:
         throw new Error(`Unsupported provider: ${provider}`);
+    }
+
+    if (!providerInstance) {
+      throw new Error(`Failed to initialize provider: ${provider}`);
     }
 
     providerCache.set(cacheKey, providerInstance);
@@ -297,7 +304,14 @@ export function createProvider(config: AIProviderConfig): LanguageModel {
 
   // Use .chat() for providers that only support chat completions API
   if (chatOnlyProviders.has(provider)) {
-    return (providerInstance as any).chat(model);
+    const instanceAny = providerInstance as any;
+    if (typeof instanceAny.chat === "function") {
+      return instanceAny.chat(model);
+    }
+
+    // Some providers (e.g. @ai-sdk/openai-compatible) don't expose .chat(); they
+    // already represent a chat-completions-compatible provider function.
+    return instanceAny(model);
   }
 
   // For OpenAI, Anthropic, Google, xAI, Mistral, Vercel, Azure - use default (responses API where available)
@@ -314,6 +328,12 @@ export function getProviderOptions(
   thinking?: ThinkingConfig,
 ): Record<string, any> | undefined {
   if (!thinking?.enabled) return undefined;
+
+  // z.ai exposes reasoning via `reasoning_content` without requiring a
+  // provider-specific "thinking" request parameter.
+  if (provider === "zai" || provider === "zai-coding-plan") {
+    return undefined;
+  }
 
   const budgetTokens = thinking.budgetTokens || 8000;
 
@@ -553,56 +573,8 @@ export function getProviderOptions(
   }
 
   // Z.AI GLM models - use thinking parameter like DeepSeek
-  if (provider === "zai") {
-    const thinkingModels = ["glm-4.7"];
-    if (thinkingModels.some((m) => model.includes(m))) {
-      return {
-        thinking: { type: "enabled" },
-      };
-    }
-  }
-
-  // Z.AI Coding Plan - pass through to underlying provider based on model
-  if (provider === "zai-coding-plan") {
-    // GLM models
-    if (model.includes("glm-4.7")) {
-      return {
-        thinking: { type: "enabled" },
-      };
-    }
-    // Claude models
-    if (model.includes("claude")) {
-      return {
-        anthropic: {
-          thinking: { type: "enabled", budgetTokens },
-        },
-      };
-    }
-    // OpenAI reasoning models
-    if (model.includes("o1") || model.includes("o3") || model.includes("o4")) {
-      return {
-        openai: {
-          reasoningEffort:
-            budgetTokens >= 8000
-              ? "high"
-              : budgetTokens >= 4000
-                ? "medium"
-                : "low",
-        },
-      };
-    }
-    // Gemini models
-    if (model.includes("gemini-2.5") || model.includes("gemini-3")) {
-      return {
-        google: {
-          thinkingConfig: {
-            includeThoughts: true,
-            thinkingBudget: budgetTokens,
-          },
-        },
-      };
-    }
-  }
+  // NOTE: z.ai provider options are intentionally not handled here because
+  // z.ai returns reasoning via `reasoning_content` without needing a request flag.
 
   return undefined;
 }
@@ -658,6 +630,15 @@ export function modelSupportsThinking(
   return models.some((m) => model.toLowerCase().includes(m.toLowerCase()));
 }
 
+function modelSupportsTemperature(provider: ProviderType, model: string): boolean {
+  // OpenAI "reasoning" / Responses models often don't support temperature (AI SDK warns loudly).
+  if (provider === "openai") {
+    const m = model.toLowerCase();
+    if (m.includes("gpt-5") || m.includes("o1") || m.includes("o3") || m.includes("o4")) return false;
+  }
+  return true;
+}
+
 // ============================================================================
 // Stream Text with Full Error Handling
 // ============================================================================
@@ -701,7 +682,7 @@ export async function* streamAI(
       system,
       messages: messages as any,
       tools,
-      temperature: temperature ?? 0.7,
+      ...(modelSupportsTemperature(provider, model) ? { temperature: temperature ?? 0.7 } : {}),
       maxRetries: maxRetries ?? 3,
       providerOptions,
       onError: onError
@@ -852,7 +833,7 @@ export async function generateAI(
       system,
       messages: messages as any,
       tools,
-      temperature: temperature ?? 0.7,
+      ...(modelSupportsTemperature(provider, model) ? { temperature: temperature ?? 0.7 } : {}),
       maxRetries: maxRetries ?? 3,
       providerOptions,
     });

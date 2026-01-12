@@ -120,24 +120,97 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
 export type ToolOutputProps = ComponentProps<"div"> & {
   output: ToolUIPart["output"];
   errorText: ToolUIPart["errorText"];
+  toolType?: ToolUIPart["type"];
 };
 
 export const ToolOutput = ({
   className,
   output,
   errorText,
+  toolType,
   ...props
 }: ToolOutputProps) => {
   if (!(output || errorText)) {
     return null;
   }
 
+  const toolName = (toolType ?? "tool").split("-").slice(1).join("-");
+
+  const asObject = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  };
+
+  const parsedStringJson = (value: unknown): Record<string, unknown> | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return asObject(parsed);
+    } catch {
+      return null;
+    }
+  };
+
+  const renderTodos = (todos: unknown) => {
+    if (!Array.isArray(todos)) return null;
+    if (todos.length === 0) {
+      return <div className="text-muted-foreground">No todos</div>;
+    }
+
+    return (
+      <div className="space-y-2">
+        <div className="space-y-1">
+          {todos.map((t, idx) => {
+            const todo = asObject(t);
+            if (!todo) return null;
+            const id = String(todo.id ?? "");
+            const content = String(todo.content ?? "");
+            const status = String(todo.status ?? "pending");
+            const priority = String(todo.priority ?? "medium");
+            const icon =
+              status === "completed"
+                ? "[x]"
+                : status === "in_progress"
+                  ? "[>]"
+                  : status === "cancelled"
+                    ? "[-]"
+                    : "[ ]";
+            return (
+              <div key={`${id}:${idx}`} className="flex items-start gap-2 font-mono text-xs">
+                <span className="text-muted-foreground">{icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="break-words text-foreground">
+                    <span className="text-muted-foreground">{id}:</span> {content}
+                  </div>
+                  <div className="text-muted-foreground">{status} · {priority}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   let Output = <div>{output as ReactNode}</div>;
 
-  if (typeof output === "object" && !isValidElement(output)) {
-    Output = (
-      <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />
-    );
+  const outputObj = asObject(output);
+  const outputJsonFromString = parsedStringJson(output);
+  const todoList = outputObj?.todos ?? outputJsonFromString?.todos;
+  const todosView = renderTodos(todoList);
+  if (todosView) {
+    Output = todosView;
+  } else if (
+    (toolName === "edit" || toolName === "edit_file" || toolName === "write" || toolName === "write_file") &&
+    typeof outputJsonFromString?.patch === "string" &&
+    String(outputJsonFromString.patch).trim()
+  ) {
+    const patch = String(outputJsonFromString.patch);
+    Output = <CodeBlock code={patch} language="diff" />;
+  } else if (typeof output === "object" && !isValidElement(output)) {
+    Output = <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />;
   } else if (typeof output === "string") {
     Output = <CodeBlock code={output} language="json" />;
   }

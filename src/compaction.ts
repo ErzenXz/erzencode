@@ -5,6 +5,7 @@
 
 import { generateText, type LanguageModel } from "ai";
 import { createProvider, type ProviderType } from "./ai-provider.js";
+import { COMPACTION_SYSTEM_PROMPT } from "./prompts.js";
 
 export interface CompactionConfig {
   provider: ProviderType;
@@ -26,38 +27,6 @@ export interface CompactionResult {
   tokensSaved?: number;
   error?: string;
 }
-
-const COMPACTION_SYSTEM_PROMPT = `You are a conversation summarizer for a coding assistant. Your task is to create a concise but comprehensive summary of the conversation history.
-
-Your summary should capture:
-1. **User's Goals**: What the user was trying to accomplish
-2. **Work Completed**: Key actions taken, files modified, code written
-3. **Current State**: Where things stand now (any pending tasks, errors, or next steps)
-4. **Important Context**: Any decisions made, constraints mentioned, or technical details that would be needed to continue
-
-Format your summary as a structured markdown document with clear sections. Be concise but don't lose critical context that would be needed to continue the work.
-
-Example format:
-## Summary of Previous Work
-
-### Goals
-- [User's main objectives]
-
-### Completed
-- [List of completed tasks with key details]
-- [Files modified: file1.ts, file2.ts]
-
-### Current State
-- [Where things stand]
-- [Any pending tasks]
-
-### Key Context
-- [Important technical decisions]
-- [Constraints or requirements]
-- [Any errors or issues encountered]
-
-### Next Steps
-- [What was planned next, if mentioned]`;
 
 /**
  * Compact/summarize a conversation history to reduce context usage

@@ -10,7 +10,15 @@ import {
   type LanguageModel,
 } from "ai";
 import { createHash } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  readdirSync,
+  statSync,
+} from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -154,14 +162,21 @@ class FileCache {
     this.ensureCacheDir();
     this.pruneIfNeeded();
     const filePath = this.getFilePath(key);
-    writeFileSync(filePath, JSON.stringify({ key, value, timestamp: Date.now() }), "utf-8");
+    writeFileSync(
+      filePath,
+      JSON.stringify({ key, value, timestamp: Date.now() }),
+      "utf-8"
+    );
   }
 
   private pruneIfNeeded(): void {
     try {
       const files = readdirSync(this.cacheDir)
         .filter((f) => f.endsWith(".json"))
-        .map((f) => ({ path: join(this.cacheDir, f), mtime: statSync(join(this.cacheDir, f)).mtimeMs }))
+        .map((f) => ({
+          path: join(this.cacheDir, f),
+          mtime: statSync(join(this.cacheDir, f)).mtimeMs,
+        }))
         .sort((a, b) => a.mtime - b.mtime);
       while (files.length >= this.maxEntries) {
         const oldest = files.shift();
@@ -172,7 +187,9 @@ class FileCache {
 
   clear(): void {
     try {
-      readdirSync(this.cacheDir).filter((f) => f.endsWith(".json")).forEach((f) => unlinkSync(join(this.cacheDir, f)));
+      readdirSync(this.cacheDir)
+        .filter((f) => f.endsWith(".json"))
+        .forEach((f) => unlinkSync(join(this.cacheDir, f)));
     } catch {}
   }
 }
@@ -232,13 +249,19 @@ class StreamStateStore {
   }
 
   save(id: string, state: Partial<StreamState>): void {
-    const existing = this.streams.get(id) || { id, chunks: [], completed: false, timestamp: Date.now() };
+    const existing = this.streams.get(id) || {
+      id,
+      chunks: [],
+      completed: false,
+      timestamp: Date.now(),
+    };
     const next = { ...existing, ...state, timestamp: Date.now() };
     this.streams.set(id, next);
     const shouldFlush =
       Boolean(next.completed) ||
       Boolean(next.error) ||
-      (Array.isArray(next.chunks) && next.chunks.length % this.writeEveryNChunks === 0);
+      (Array.isArray(next.chunks) &&
+        next.chunks.length % this.writeEveryNChunks === 0);
     if (shouldFlush) {
       this.flushToDisk(id, next);
     }
@@ -269,7 +292,7 @@ class StreamStateStore {
       const shouldFlush =
         state.completed ||
         Boolean(state.error) ||
-        (state.chunks.length % this.writeEveryNChunks === 0);
+        state.chunks.length % this.writeEveryNChunks === 0;
       if (shouldFlush) {
         this.flushToDisk(id, state);
       }
@@ -297,10 +320,18 @@ export const streamStateStore = new StreamStateStore();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function calculateDelay(attempt: number, config: RetryConfig, retryAfter?: number): number {
+function calculateDelay(
+  attempt: number,
+  config: RetryConfig,
+  retryAfter?: number
+): number {
   if (retryAfter) return Math.min(retryAfter * 1000, config.maxDelayMs);
-  const delay = config.initialDelayMs * Math.pow(config.backoffMultiplier, attempt);
-  return Math.min(delay + delay * 0.2 * (Math.random() * 2 - 1), config.maxDelayMs);
+  const delay =
+    config.initialDelayMs * Math.pow(config.backoffMultiplier, attempt);
+  return Math.min(
+    delay + delay * 0.2 * (Math.random() * 2 - 1),
+    config.maxDelayMs
+  );
 }
 
 function isRetryableError(error: unknown, config: RetryConfig): boolean {
@@ -309,7 +340,21 @@ function isRetryableError(error: unknown, config: RetryConfig): boolean {
     const err = error as any;
     const status = err.status || err.statusCode;
     if (status && config.retryableStatusCodes.includes(status)) return true;
-    if (["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE"].includes(err.code)) return true;
+    if (["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE"].includes(err.code))
+      return true;
+
+    // Vercel AI SDK / provider-specific rate limit errors (may not surface statusCode)
+    const code = err.code || err.error?.code || err.data?.error?.code;
+    if (typeof code === "string" && code.toLowerCase().includes("rate_limit"))
+      return true;
+    if (code === "rate_limit_exceeded") return true;
+
+    const msg = err.message || err.error?.message || err.data?.error?.message;
+    if (
+      typeof msg === "string" &&
+      /rate limit|rate_limited|rate_limit_exceeded/i.test(msg)
+    )
+      return true;
   }
   return false;
 }
@@ -317,8 +362,29 @@ function isRetryableError(error: unknown, config: RetryConfig): boolean {
 function extractRetryAfter(error: unknown): number | undefined {
   if (error && typeof error === "object") {
     const err = error as any;
-    const val = err.headers?.["retry-after"] || err.retryAfter;
-    if (val) { const p = parseInt(val, 10); return isNaN(p) ? undefined : p; }
+    const val =
+      err.headers?.["retry-after"] ||
+      err.headers?.["Retry-After"] ||
+      err.response?.headers?.["retry-after"] ||
+      err.response?.headers?.["Retry-After"] ||
+      err.retryAfter ||
+      err.error?.retry_after ||
+      err.error?.retryAfter ||
+      err.data?.error?.retry_after;
+    if (val) {
+      const p = typeof val === "number" ? val : parseFloat(String(val));
+      return Number.isFinite(p) ? Math.ceil(p) : undefined;
+    }
+
+    // OpenAI/Vercel messages often contain: "Please try again in 7.497s."
+    const msg = err.message || err.error?.message || err.data?.error?.message;
+    if (typeof msg === "string") {
+      const m = msg.match(/try again in\s*([0-9.]+)\s*s/i);
+      if (m?.[1]) {
+        const seconds = parseFloat(m[1]);
+        if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+      }
+    }
   }
   return undefined;
 }
@@ -326,15 +392,18 @@ function extractRetryAfter(error: unknown): number | undefined {
 function generateCacheKey(params: any, modelId: string, op: string): string {
   const canonical = (() => {
     const messages = Array.isArray(params?.messages)
-      ? params.messages.map((m: any) => ({ role: m?.role, content: m?.content }))
+      ? params.messages.map((m: any) => ({
+          role: m?.role,
+          content: m?.content,
+        }))
       : undefined;
 
     const tools = params?.tools
       ? Array.isArray(params.tools)
         ? params.tools.map((t: any) => t?.name).filter(Boolean)
         : typeof params.tools === "object"
-          ? Object.keys(params.tools)
-          : undefined
+        ? Object.keys(params.tools)
+        : undefined
       : undefined;
 
     return {
@@ -362,9 +431,22 @@ function wrapError(error: unknown): Error {
     const err = error as any;
     const status = err.status || err.statusCode;
     const message = err.message || String(error);
-    if (status === 429) return new AIRateLimitError(`Rate limit exceeded: ${message}`, extractRetryAfter(error), err);
-    if (status === 401 || status === 403) return new AIAuthenticationError(message, err);
-    if (status >= 500 && status < 600) return new AIServerError(message, status, err);
+    const code = err.code || err.error?.code || err.data?.error?.code;
+    if (
+      status === 429 ||
+      code === "rate_limit_exceeded" ||
+      (typeof code === "string" && code.toLowerCase().includes("rate_limit"))
+    ) {
+      return new AIRateLimitError(
+        `Rate limit exceeded: ${message}`,
+        extractRetryAfter(error),
+        err
+      );
+    }
+    if (status === 401 || status === 403)
+      return new AIAuthenticationError(message, err);
+    if (status >= 500 && status < 600)
+      return new AIServerError(message, status, err);
   }
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -383,11 +465,17 @@ export function createRetryMiddleware(
     wrapGenerate: async ({ doGenerate }) => {
       let lastError: Error | undefined;
       for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
-        try { return await doGenerate(); }
-        catch (error: unknown) {
+        try {
+          return await doGenerate();
+        } catch (error: unknown) {
           lastError = error instanceof Error ? error : new Error(String(error));
-          if (attempt === cfg.maxRetries || !isRetryableError(error, cfg)) throw wrapError(error);
-          const delayMs = calculateDelay(attempt, cfg, extractRetryAfter(error));
+          if (attempt === cfg.maxRetries || !isRetryableError(error, cfg))
+            throw wrapError(error);
+          const delayMs = calculateDelay(
+            attempt,
+            cfg,
+            extractRetryAfter(error)
+          );
           onRetry?.(attempt + 1, lastError, delayMs);
           await sleep(delayMs);
         }
@@ -397,11 +485,17 @@ export function createRetryMiddleware(
     wrapStream: async ({ doStream }) => {
       let lastError: Error | undefined;
       for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
-        try { return await doStream(); }
-        catch (error: unknown) {
+        try {
+          return await doStream();
+        } catch (error: unknown) {
           lastError = error instanceof Error ? error : new Error(String(error));
-          if (attempt === cfg.maxRetries || !isRetryableError(error, cfg)) throw wrapError(error);
-          const delayMs = calculateDelay(attempt, cfg, extractRetryAfter(error));
+          if (attempt === cfg.maxRetries || !isRetryableError(error, cfg))
+            throw wrapError(error);
+          const delayMs = calculateDelay(
+            attempt,
+            cfg,
+            extractRetryAfter(error)
+          );
           onRetry?.(attempt + 1, lastError, delayMs);
           await sleep(delayMs);
         }
@@ -431,7 +525,15 @@ export function createCacheMiddleware(
       const cached = cache.get<any>(key);
       if (cached !== null) {
         onCacheHit?.(key);
-        return { ...cached, response: { ...cached.response, timestamp: cached?.response?.timestamp ? new Date(cached.response.timestamp) : undefined } };
+        return {
+          ...cached,
+          response: {
+            ...cached.response,
+            timestamp: cached?.response?.timestamp
+              ? new Date(cached.response.timestamp)
+              : undefined,
+          },
+        };
       }
       onCacheMiss?.(key);
       const result = await doGenerate();
@@ -446,7 +548,11 @@ export function createCacheMiddleware(
         const chunks = Array.isArray(cached?.chunks) ? cached.chunks : [];
         const { chunks: _chunks, ...rest } = (cached ?? {}) as any;
         return {
-          stream: simulateReadableStream({ initialDelayInMs: 0, chunkDelayInMs: 5, chunks }),
+          stream: simulateReadableStream({
+            initialDelayInMs: 0,
+            chunkDelayInMs: 5,
+            chunks,
+          }),
           ...rest,
         };
       }
@@ -472,7 +578,9 @@ export function createCacheMiddleware(
 // Logging Middleware
 // ============================================================================
 
-export function createLoggingMiddleware(log: (msg: string, data?: any) => void = console.log): LanguageModelMiddleware {
+export function createLoggingMiddleware(
+  log: (msg: string, data?: any) => void = console.log
+): LanguageModelMiddleware {
   return {
     specificationVersion: "v3",
     wrapGenerate: async ({ doGenerate, model }) => {
@@ -480,10 +588,16 @@ export function createLoggingMiddleware(log: (msg: string, data?: any) => void =
       log(`[AI] Generate starting`, { model: model.modelId });
       try {
         const result = await doGenerate();
-        log(`[AI] Generate completed in ${Date.now() - start}ms`, { model: model.modelId, usage: (result as any).usage });
+        log(`[AI] Generate completed in ${Date.now() - start}ms`, {
+          model: model.modelId,
+          usage: (result as any).usage,
+        });
         return result;
       } catch (error) {
-        log(`[AI] Generate failed after ${Date.now() - start}ms`, { model: model.modelId, error: error instanceof Error ? error.message : String(error) });
+        log(`[AI] Generate failed after ${Date.now() - start}ms`, {
+          model: model.modelId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     },
@@ -494,7 +608,10 @@ export function createLoggingMiddleware(log: (msg: string, data?: any) => void =
         log(`[AI] Stream connected`, { model: model.modelId });
         return result;
       } catch (error) {
-        log(`[AI] Stream failed`, { model: model.modelId, error: error instanceof Error ? error.message : String(error) });
+        log(`[AI] Stream failed`, {
+          model: model.modelId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     },
@@ -505,16 +622,24 @@ export function createLoggingMiddleware(log: (msg: string, data?: any) => void =
 // Resumable Stream Middleware
 // ============================================================================
 
-export function createResumableStreamMiddleware(streamId?: string): LanguageModelMiddleware {
-  const id = streamId || `stream_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+export function createResumableStreamMiddleware(
+  streamId?: string
+): LanguageModelMiddleware {
+  const id =
+    streamId || `stream_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   return {
     specificationVersion: "v3",
     wrapStream: async ({ doStream }) => {
       streamStateStore.save(id, { id, chunks: [], completed: false });
       const { stream, ...rest } = await doStream();
       const ts = new TransformStream({
-        transform(c: any, ctrl: any) { streamStateStore.appendChunk(id, c); ctrl.enqueue(c); },
-        flush() { streamStateStore.save(id, { completed: true }); },
+        transform(c: any, ctrl: any) {
+          streamStateStore.appendChunk(id, c);
+          ctrl.enqueue(c);
+        },
+        flush() {
+          streamStateStore.save(id, { completed: true });
+        },
       });
       return { stream: stream.pipeThrough(ts), ...rest, streamId: id };
     },
@@ -525,40 +650,67 @@ export function createResumableStreamMiddleware(streamId?: string): LanguageMode
 // Combined Middleware Factory
 // ============================================================================
 
-export function createAIMiddleware(config: MiddlewareConfig = {}): LanguageModelMiddleware {
+export function createAIMiddleware(
+  config: MiddlewareConfig = {}
+): LanguageModelMiddleware {
   const middlewares: LanguageModelMiddleware[] = [];
   if (config.logging) middlewares.push(createLoggingMiddleware());
-  if (config.cache?.enabled !== false) middlewares.push(createCacheMiddleware(config.cache, config.onCacheHit, config.onCacheMiss));
+  if (config.cache?.enabled !== false)
+    middlewares.push(
+      createCacheMiddleware(config.cache, config.onCacheHit, config.onCacheMiss)
+    );
   middlewares.push(createRetryMiddleware(config.retry, config.onRetry));
   return combineMiddleware(middlewares);
 }
 
-function combineMiddleware(middlewares: LanguageModelMiddleware[]): LanguageModelMiddleware {
+function combineMiddleware(
+  middlewares: LanguageModelMiddleware[]
+): LanguageModelMiddleware {
   if (middlewares.length === 0) return { specificationVersion: "v3" };
-  if (middlewares.length === 1) return middlewares[0] as LanguageModelMiddleware;
-  return middlewares.reduce<LanguageModelMiddleware>((combined, mw) => ({
-    specificationVersion: "v3",
-    wrapGenerate: combined.wrapGenerate && mw.wrapGenerate
-      ? async (opts: any) => mw.wrapGenerate!({ ...opts, doGenerate: async () => combined.wrapGenerate!(opts) })
-      : combined.wrapGenerate || mw.wrapGenerate,
-    wrapStream: combined.wrapStream && mw.wrapStream
-      ? async (opts: any) => mw.wrapStream!({ ...opts, doStream: async () => combined.wrapStream!(opts) })
-      : combined.wrapStream || mw.wrapStream,
-  }), { specificationVersion: "v3" });
+  if (middlewares.length === 1)
+    return middlewares[0] as LanguageModelMiddleware;
+  return middlewares.reduce<LanguageModelMiddleware>(
+    (combined, mw) => ({
+      specificationVersion: "v3",
+      wrapGenerate:
+        combined.wrapGenerate && mw.wrapGenerate
+          ? async (opts: any) =>
+              mw.wrapGenerate!({
+                ...opts,
+                doGenerate: async () => combined.wrapGenerate!(opts),
+              })
+          : combined.wrapGenerate || mw.wrapGenerate,
+      wrapStream:
+        combined.wrapStream && mw.wrapStream
+          ? async (opts: any) =>
+              mw.wrapStream!({
+                ...opts,
+                doStream: async () => combined.wrapStream!(opts),
+              })
+          : combined.wrapStream || mw.wrapStream,
+    }),
+    { specificationVersion: "v3" }
+  );
 }
 
 // ============================================================================
 // Wrap Model with Middleware
 // ============================================================================
 
-export function withMiddleware(model: LanguageModel, config: MiddlewareConfig = {}): LanguageModel {
-  return wrapLanguageModel({ model: model as any, middleware: createAIMiddleware(config) });
+export function withMiddleware(
+  model: LanguageModel,
+  config: MiddlewareConfig = {}
+): LanguageModel {
+  return wrapLanguageModel({
+    model: model as any,
+    middleware: createAIMiddleware(config),
+  });
 }
 
 export function withResumableMiddleware(
   model: LanguageModel,
   config: MiddlewareConfig = {},
-  streamId?: string,
+  streamId?: string
 ): LanguageModel {
   const middleware = combineMiddleware([
     createResumableStreamMiddleware(streamId),
@@ -574,7 +726,9 @@ export function withResumableMiddleware(
 export function resumeStream(streamId: string): AsyncGenerator<any> | null {
   const state = streamStateStore.get(streamId);
   if (!state || state.chunks.length === 0) return null;
-  async function* gen() { for (const c of state!.chunks) yield c; }
+  async function* gen() {
+    for (const c of state!.chunks) yield c;
+  }
   return gen();
 }
 
@@ -583,7 +737,10 @@ export function resumeStream(streamId: string): AsyncGenerator<any> | null {
 // ============================================================================
 
 export function clearCache(cacheDir?: string): void {
-  new FileCache({ ...DEFAULT_CACHE_CONFIG, cacheDir: cacheDir || DEFAULT_CACHE_CONFIG.cacheDir }).clear();
+  new FileCache({
+    ...DEFAULT_CACHE_CONFIG,
+    cacheDir: cacheDir || DEFAULT_CACHE_CONFIG.cacheDir,
+  }).clear();
 }
 
 export type { LanguageModelMiddleware };

@@ -57,6 +57,7 @@ export interface GlobalConfig {
     copilot?: string;
     azure?: string;
     exa?: string;
+    voyage?: string;
   };
 
   // Default provider and model
@@ -122,7 +123,31 @@ export function modelSupportsThinking(
   provider: ProviderType | string,
   modelId: string,
 ): boolean {
-  return modelSupports(provider as string, modelId, "thinking");
+  // Prefer models.dev-derived capability data if available in cache.
+  // (Note: UI frequently calls this before any dynamic preload, so we also
+  // keep a conservative fallback heuristic.)
+  if (modelSupports(provider as string, modelId, "thinking")) return true;
+
+  const p = String(provider);
+  const m = String(modelId).toLowerCase();
+
+  const heuristics: Record<string, string[]> = {
+    anthropic: ["claude-3-7", "claude-sonnet-4", "claude-opus-4", "claude-haiku-4"],
+    openai: ["o1", "o3", "o4", "gpt-5"],
+    google: ["gemini-2.5", "gemini-3"],
+    xai: ["grok-3-mini", "grok-4"],
+    deepseek: ["deepseek-reasoner", "deepseek-r1", "deepseek-chat"],
+    openrouter: ["claude", "o1", "o3", "deepseek-r1", "gemini-2.5"],
+    together: ["deepseek-r1"],
+    fireworks: ["deepseek-r1"],
+    vercel: ["claude", "o1", "o3", "gemini-2.5"],
+    azure: ["o1", "o3"],
+    zai: ["glm-"],
+    "zai-coding-plan": ["glm-"],
+  };
+
+  const patterns = heuristics[p] ?? [];
+  return patterns.some((pat) => m.includes(pat));
 }
 
 /**
@@ -458,6 +483,7 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   vercel: "VERCEL_AI_GATEWAY_API_KEY",
   ollama: "OLLAMA_HOST",
   exa: "EXA_API_KEY",
+  voyage: "VOYAGE_API_KEY",
   zai: "ZAI_API_KEY",
   "zai-coding-plan": "ZAI_API_KEY",
 };
