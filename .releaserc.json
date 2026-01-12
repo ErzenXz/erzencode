@@ -1,0 +1,16 @@
+{
+  "branches": ["main", "master"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    "@semantic-release/changelog",
+    "@semantic-release/npm",
+    "@semantic-release/git",
+    "@semantic-release/github"
+  ],
+  "changelogFile": "CHANGELOG.md",
+  "changelogTitle": "# Changelog\n\nAll notable changes to this project will be documented in this file.\n",
+  "commitMessageFormat": "chore(release): {{currentTag}} [skip ci]\n\n{{notes}}",
+  "npmPublish": true,
+  "tagFormat": "v${version}"
+}

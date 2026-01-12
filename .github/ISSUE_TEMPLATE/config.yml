@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & Discussions
+    url: https://github.com/ErzenXz/erzencode/discussions
+    about: Use GitHub Discussions for questions, ideas, or general conversation.
+  - name: Documentation
+    url: https://github.com/ErzenXz/erzencode#readme
+    about: Check the README for getting started and usage information.

@@ -1,0 +1,104 @@
+name: Bug Report
+description: Report a problem with erzencode
+title: '[Bug] '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+
+  - type: input
+    id: version
+    attributes:
+      label: erzencode version
+      description: What version of erzencode are you using?
+      placeholder: e.g., 0.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: AI Provider
+      description: Which AI provider are you using?
+      options:
+        - Anthropic
+        - OpenAI
+        - Google
+        - xAI (Grok)
+        - Mistral
+        - OpenRouter
+        - Groq
+        - DeepSeek
+        - Ollama
+        - Other
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: Which mode were you using?
+      options:
+        - agent (default)
+        - ask (read-only)
+        - plan (planning mode)
+        - web UI
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Run command '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Paste any relevant logs, error messages, or screenshots
+      render: shell
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: e.g., macOS 14.0, Ubuntu 22.04, Windows 11
+    validations:
+      required: false
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: Run `node --version`
+      description: Optional
+    validations:
+      required: false

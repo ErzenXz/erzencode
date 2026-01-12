@@ -1,6 +1,6 @@
 {
   "name": "erzencode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-powered coding assistant CLI - Your intelligent pair programming companion",
   "type": "module",
   "main": "./dist/cli.js",
@@ -10,10 +10,11 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "npm run clean && tsc && vite build",
+    "build": "pnpm run clean && tsc && vite build",
     "dev": "tsx src/cli.ts",
     "dev:web-ui": "vite",
     "build:web-ui": "vite build",
@@ -24,7 +25,10 @@
     "prepublishOnly": "pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "commit": "git-cz",
+    "lint:commit": "commitlint --edit",
+    "release": "semantic-release"
   },
   "repository": {
     "type": "git",
@@ -100,6 +104,15 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.1",
+    "@semantic-release/npm": "^12.0.1",
+    "@commitlint/parse": "^19.6.1",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/release-notes-generator": "^14.0.3",
     "@tailwindcss/vite": "^4.1.18",
     "@types/gradient-string": "^1.1.6",
     "@types/inquirer": "^9.0.9",
@@ -111,6 +124,7 @@
     "autoprefixer": "^10.4.23",
     "fast-check": "^4.5.3",
     "postcss": "^8.5.6",
+    "semantic-release": "^24.2.1",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
@@ -128,6 +142,10 @@
     "agent",
     "openai",
     "anthropic",
-    "claude"
+    "claude",
+    "gpt",
+    "llm",
+    "developer-tools",
+    "pair-programming"
   ]
 }

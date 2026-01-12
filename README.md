@@ -4,6 +4,22 @@
 
 [![npm version](https://img.shields.io/npm/v/erzencode.svg)](https://www.npmjs.com/package/erzencode)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/node/v/erzencode.svg)](https://nodejs.org)
+[![Commitlint](https://img.shields.io/badge/commitlint-conventional-blue)](https://commitlint.js.org)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-%23E52961.svg)](https://conventionalcommits.org)
+[![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
+[![CI](https://github.com/ErzenXz/erzencode/actions/workflows/ci.yml/badge.svg)](https://github.com/ErzenXz/erzencode/actions/workflows/ci.yml)
+
+## Features
+
+- **Multiple AI Providers**: Support for Anthropic, OpenAI, Google, xAI, Mistral, OpenRouter, Groq, DeepSeek, and Ollama
+- **Terminal UI**: Beautiful terminal interface with streaming responses
+- **Web UI**: Browser-based IDE with Monaco editor and terminal
+- **File Operations**: Read, write, edit, search, and manage files
+- **Shell Integration**: Run commands with approval prompts
+- **Git Support**: View status, diffs, and manage repositories
+- **Multiple Modes**: agent, ask, and plan modes for different workflows
+- **Session Management**: Save and resume conversations
 
 ## Install
 
@@ -142,6 +158,10 @@ This opens a browser-based UI with:
 - Commands timeout after 30 seconds
 - All file operations are within your project directory
 
+## Contributing
+
+We love contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## Development
 
 ```bash
@@ -164,6 +184,14 @@ pnpm unlink:global
 npm install -g erzencode
 ```
 
+## Project Status
+
+This project is under active development. See [CHANGELOG.md](CHANGELOG.md) for recent changes.
+
 ## License
 
-MIT © [Erzen Krasniqi](https://github.com/erzenkrasniqi)
+MIT &copy; [Erzen Krasniqi](https://github.com/erzenkrasniqi)
+
+---
+
+Made with :heart: by [Erzen Krasniqi](https://github.com/erzenkrasniqi)

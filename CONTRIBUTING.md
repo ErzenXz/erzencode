@@ -205,14 +205,49 @@ erzencode
 - Functional React components with hooks
 - Minimal dependencies where possible
 
+## Commit Message Guidelines
+
+We use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+```
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `docs` | Documentation changes |
+| `style` | Code style changes (formatting, etc.) |
+| `refactor` | Code refactoring |
+| `perf` | Performance improvements |
+| `test` | Adding or updating tests |
+| `build` | Build system changes |
+| `ci` | CI/CD changes |
+| `chore` | Other changes |
+
+### Examples
+
+```bash
+feat(cli): add support for custom themes
+fix(web-ui): resolve memory leak in terminal component
+docs(readme): update installation instructions
+test(ai-agent): add unit tests for streaming responses
+ci(github): add semantic release automation
+```
+
 ## Pull Request Process
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
+2. Create a feature branch from `main` or `master`
+3. Make your changes following commit message guidelines
 4. Run `pnpm build` to ensure it compiles
 5. Test manually with `pnpm dev`
-6. Submit PR with clear description
+6. Submit PR with conventional commit title (e.g., `feat(cli): add dark mode support`)
 
 ## Questions?
 
