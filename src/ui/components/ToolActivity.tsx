@@ -1,7 +1,7 @@
 /**
  * Tool Activity Component
- * Displays tool execution with nice colors for light/dark terminals
- * Uses bright colors for better visibility in both modes
+ * Claude Code style: ● ToolName(input) with detail line below.
+ * Uses bright colors for better visibility in both light and dark modes.
  */
 
 import React from "react";
@@ -14,52 +14,38 @@ interface ToolActivityProps {
   tools: ToolPart[];
   isStreaming?: boolean;
   workspaceRoot?: string;
+  isExpanded?: boolean;
 }
 
-// Tool display names and icons - using Unicode that works in most terminals
-// Colors use "Bright" variants for better visibility in both light and dark modes
 const TOOL_DISPLAY: Record<string, { label: string; icon: string; color: string }> = {
-  // File operations
-  read: { label: "Read", icon: "○", color: "blueBright" },
-  read_file: { label: "Read", icon: "○", color: "blueBright" },
+  read: { label: "Read", icon: "●", color: "blueBright" },
+  read_file: { label: "Read", icon: "●", color: "blueBright" },
   write: { label: "Write", icon: "●", color: "greenBright" },
   write_file: { label: "Write", icon: "●", color: "greenBright" },
-  edit: { label: "Edit", icon: "◐", color: "yellowBright" },
-  edit_file: { label: "Edit", icon: "◐", color: "yellowBright" },
-
-  // Search & navigation
-  glob: { label: "Glob", icon: "◎", color: "magentaBright" },
-  grep: { label: "Grep", icon: "⦿", color: "magentaBright" },
-  list: { label: "List", icon: "▸", color: "cyanBright" },
-  list_directory: { label: "List", icon: "▸", color: "cyanBright" },
-  file_tree: { label: "Tree", icon: "▾", color: "cyanBright" },
-
-  // Execution
-  bash: { label: "Run", icon: "▶", color: "yellowBright" },
-  execute_command: { label: "Run", icon: "▶", color: "yellowBright" },
-
-  // Tasks & todos
-  task: { label: "Task", icon: "◆", color: "blueBright" },
-  todowrite: { label: "Todo", icon: "☑", color: "greenBright" },
-  todoread: { label: "Todo", icon: "☐", color: "cyanBright" },
-  todo: { label: "Todo", icon: "☐", color: "greenBright" },
-
-  // Web & external
-  webfetch: { label: "Fetch", icon: "⊕", color: "cyanBright" },
-  exa_web_search: { label: "Search", icon: "⊛", color: "magentaBright" },
-  exa_code_search: { label: "Code", icon: "⊘", color: "magentaBright" },
+  edit: { label: "Edit", icon: "●", color: "yellowBright" },
+  edit_file: { label: "Edit", icon: "●", color: "yellowBright" },
+  glob: { label: "Search", icon: "●", color: "magentaBright" },
+  grep: { label: "Search", icon: "●", color: "magentaBright" },
+  list: { label: "List", icon: "●", color: "cyanBright" },
+  list_directory: { label: "List", icon: "●", color: "cyanBright" },
+  file_tree: { label: "Tree", icon: "●", color: "cyanBright" },
+  bash: { label: "Run", icon: "●", color: "yellowBright" },
+  execute_command: { label: "Run", icon: "●", color: "yellowBright" },
+  task: { label: "Subagent", icon: "●", color: "blueBright" },
+  todowrite: { label: "Todo", icon: "●", color: "greenBright" },
+  todoread: { label: "Todo", icon: "●", color: "cyanBright" },
+  todo: { label: "Todo", icon: "●", color: "greenBright" },
+  webfetch: { label: "Fetch", icon: "●", color: "cyanBright" },
+  exa_web_search: { label: "Search", icon: "●", color: "magentaBright" },
+  exa_code_search: { label: "Code", icon: "●", color: "magentaBright" },
+  semantic_search: { label: "Search", icon: "●", color: "magentaBright" },
 };
 
-const MAX_LINES = 8;
-const MAX_DIFF_LINES = 6;
-
-// Truncate string with ellipsis
 const truncate = (str: string, max: number): string => {
   if (!str) return "";
   return str.length > max ? str.slice(0, max - 1) + "…" : str;
 };
 
-// Make path relative to workspace
 const relativePath = (filePath: string, workspaceRoot?: string): string => {
   if (!filePath) return "";
   if (workspaceRoot && filePath.startsWith(workspaceRoot)) {
@@ -70,125 +56,67 @@ const relativePath = (filePath: string, workspaceRoot?: string): string => {
   return parts[parts.length - 1] || filePath;
 };
 
-// Limit lines and add truncation indicator
-const limitLines = (lines: string[], max: number): { lines: string[]; truncated: number } => {
-  if (lines.length <= max) return { lines, truncated: 0 };
-  return { lines: lines.slice(0, max), truncated: lines.length - max };
-};
-
-// Format input for each tool type - concise summaries
-const formatToolInput = (
+function formatToolInputAsCall(
   name: string,
   args?: Record<string, unknown>,
   workspaceRoot?: string,
-): { summary: string; details: string[] } => {
-  if (!args) return { summary: "", details: [] };
+): string {
+  if (!args) return "";
 
   switch (name) {
     case "read":
     case "read_file": {
       const path = relativePath(String(args.filePath || args.path || ""), workspaceRoot);
-      const startLine = args.start_line || args.offset;
-      const endLine = args.end_line;
-      let range = "";
-      if (startLine && endLine) range = ` L${startLine}-${endLine}`;
-      else if (startLine) range = ` L${startLine}+`;
-      return { summary: path + range, details: [] };
+      return path;
     }
-
     case "write":
-    case "write_file": {
-      const path = relativePath(String(args.filePath || args.path || ""), workspaceRoot);
-      return { summary: path, details: [] };
-    }
-
+    case "write_file":
     case "edit":
     case "edit_file": {
       const path = relativePath(String(args.filePath || args.path || ""), workspaceRoot);
-      return { summary: path, details: [] };
+      return path;
     }
-
     case "bash":
     case "execute_command": {
       const cmd = String(args.command || "");
-      const desc = args.description ? String(args.description) : "";
-      const bg = args.run_in_background ? " (bg)" : "";
-      // Show description or just command name
-      if (desc) return { summary: truncate(desc, 45) + bg, details: [`$ ${truncate(cmd, 60)}`] };
-      const cmdParts = cmd.trim().split(/\s+/);
-      return { summary: (cmdParts[0] || "") + (cmdParts.length > 1 ? " ..." : "") + bg, details: [`$ ${truncate(cmd, 60)}`] };
+      return truncate(cmd, 55);
     }
-
     case "grep": {
       const pattern = String(args.pattern || args.query || "");
-      const path = args.path ? relativePath(String(args.path), workspaceRoot) : ".";
-      const include = args.include || args.includePattern;
-      return { 
-        summary: `"${truncate(pattern, 25)}"${include ? ` in ${include}` : path !== "." ? ` in ${path}` : ""}`, 
-        details: [] 
-      };
+      const pathArg = args.path ? relativePath(String(args.path), workspaceRoot) : "";
+      const parts: string[] = [];
+      if (pattern) parts.push(`pattern: "${truncate(pattern, 25)}"`);
+      if (pathArg && pathArg !== ".") parts.push(`path: "${pathArg}"`);
+      return parts.join(", ");
     }
-
     case "glob": {
-      const pattern = String(args.pattern || "");
-      const path = args.path ? relativePath(String(args.path), workspaceRoot) : ".";
-      return { summary: path !== "." ? `${pattern} in ${path}` : pattern, details: [] };
+      const pattern = String(args.pattern || args.filePattern || "");
+      return `pattern: "${pattern}"`;
     }
-
     case "list":
     case "list_directory":
     case "file_tree": {
       const path = relativePath(String(args.path || "."), workspaceRoot);
-      const depth = args.depth ? ` (d:${args.depth})` : "";
-      return { summary: path + depth, details: [] };
+      return `path: "${path}"`;
     }
-
     case "task": {
       const desc = String(args.description || "");
-      const type = args.subagent_type ? `[${args.subagent_type}] ` : "";
-      return { summary: type + truncate(desc, 40), details: [] };
+      return `task: "${truncate(desc, 40)}"`;
     }
-
-    case "todowrite":
-    case "todo": {
-      const todos = args.todos as Array<{ content: string; status: string }> | undefined;
-      if (!todos || !Array.isArray(todos)) return { summary: "(no items)", details: [] };
-      return { summary: `${todos.length} items`, details: [] };
-    }
-
-    case "webfetch": {
-      const url = String(args.url || "");
-      try {
-        const hostname = new URL(url).hostname;
-        return { summary: hostname, details: [] };
-      } catch {
-        return { summary: truncate(url, 40), details: [] };
-      }
-    }
-
-    case "exa_web_search":
-    case "exa_code_search": {
-      const query = String(args.query || "");
-      return { summary: `"${truncate(query, 35)}"`, details: [] };
-    }
-
     default:
-      return { summary: "", details: [] };
+      return "";
   }
-};
+}
 
-// Format output for each tool type - concise stats
-const formatToolOutput = (
+function formatToolResultSummary(
   name: string,
   output?: string,
-  workspaceRoot?: string,
-): { lines: string[]; isError: boolean; stats?: string; diffLines?: string[] } => {
-  if (!output) return { lines: [], isError: false };
+): { summary: string; isError: boolean; isExpandable: boolean } {
+  if (!output) return { summary: "", isError: false, isExpandable: false };
 
   const isError = output.startsWith("Error:") || output.includes('"success":false');
 
-  // Try to parse JSON
-  let parsed: any = null;
+  let parsed: Record<string, unknown> | null = null;
   if (output.startsWith("{") || output.startsWith("[")) {
     try {
       parsed = JSON.parse(output);
@@ -197,232 +125,144 @@ const formatToolOutput = (
 
   if (parsed) {
     if (parsed.success === false) {
-      return { lines: [truncate(String(parsed.error || parsed.message || "Failed"), 60)], isError: true };
+      return { summary: truncate(String(parsed.error || parsed.message || "Failed"), 50), isError: true, isExpandable: false };
     }
 
     switch (name) {
       case "read":
       case "read_file": {
-        const totalLines = parsed.totalLines || parsed.lines || "?";
-        const showing = parsed.showing;
-        const stats = showing 
-          ? `${totalLines} lines (${showing.from}-${showing.to})`
-          : `${totalLines} lines`;
-        return { lines: [], isError: false, stats };
+        const totalLines = parsed.totalLines || parsed.lines;
+        if (totalLines) return { summary: `Read ${totalLines} lines`, isError: false, isExpandable: true };
+        const content = parsed.content || parsed.text;
+        if (content && typeof content === "string") {
+          return { summary: `Read ${content.split("\n").length} lines`, isError: false, isExpandable: true };
+        }
+        return { summary: "Read file", isError: false, isExpandable: true };
       }
-
       case "write":
       case "write_file": {
         const linesWritten = parsed.lines || parsed.linesWritten;
-        const stats: string[] = [];
-        if (parsed.linesAdded > 0) stats.push(`+${parsed.linesAdded}`);
-        if (parsed.linesRemoved > 0) stats.push(`-${parsed.linesRemoved}`);
-        
-        // Extract diff if available
-        let diffLines: string[] | undefined;
-        if (parsed.patch) {
-          const patchLines = String(parsed.patch).split("\n");
-          diffLines = patchLines.slice(0, MAX_DIFF_LINES);
-          if (patchLines.length > MAX_DIFF_LINES) {
-            diffLines.push(`... ${patchLines.length - MAX_DIFF_LINES} more`);
-          }
-        }
-        
-        return { 
-          lines: [], 
-          isError: false, 
-          stats: linesWritten ? `${linesWritten} lines${stats.length ? ` (${stats.join(" ")})` : ""}` : stats.join(" ") || "written",
-          diffLines,
-        };
+        return { summary: linesWritten ? `Wrote ${linesWritten} lines` : "File written", isError: false, isExpandable: false };
       }
-
       case "edit":
       case "edit_file": {
         const stats: string[] = [];
-        if (parsed.linesAdded > 0) stats.push(`+${parsed.linesAdded}`);
-        if (parsed.linesRemoved > 0) stats.push(`-${parsed.linesRemoved}`);
-        
-        // Extract diff if available
-        let diffLines: string[] | undefined;
-        if (parsed.patch || parsed.diff) {
-          const diffContent = parsed.patch || (Array.isArray(parsed.diff) ? parsed.diff.join("\n") : parsed.diff);
-          if (diffContent) {
-            const patchLines = String(diffContent).split("\n");
-            diffLines = patchLines.slice(0, MAX_DIFF_LINES);
-            if (patchLines.length > MAX_DIFF_LINES) {
-              diffLines.push(`... ${patchLines.length - MAX_DIFF_LINES} more`);
-            }
-          }
-        }
-        
-        return { 
-          lines: [], 
-          isError: false, 
-          stats: stats.join(" ") || "applied",
-          diffLines,
-        };
+        if (typeof parsed.linesAdded === "number" && parsed.linesAdded > 0) stats.push(`+${parsed.linesAdded}`);
+        if (typeof parsed.linesRemoved === "number" && parsed.linesRemoved > 0) stats.push(`-${parsed.linesRemoved}`);
+        return { summary: stats.length > 0 ? `Applied ${stats.join(" ")}` : "Edit applied", isError: false, isExpandable: true };
       }
-
       case "bash":
       case "execute_command": {
-        const exitCode = parsed.exit_code ?? parsed.exitCode;
-        
+        const exitCode = (parsed.exit_code ?? parsed.exitCode) as number | undefined;
         if (parsed.status === "background") {
           const pid = parsed.process_id || parsed.pid;
-          return { lines: [], isError: false, stats: pid ? `bg pid:${pid}` : "background" };
+          return { summary: pid ? `Background pid:${pid}` : "Running in background", isError: false, isExpandable: false };
         }
-
-        const result: string[] = [];
+        if (exitCode !== 0 && exitCode !== undefined) {
+          return { summary: `Exit ${exitCode}`, isError: true, isExpandable: true };
+        }
         const stdout = String(parsed.stdout || "").trim();
-        const stderr = String(parsed.stderr || "").trim();
-        const hasError = exitCode !== 0 && exitCode !== undefined;
-        
-        const outputText = hasError && stderr ? stderr : stdout;
-        if (outputText) {
-          const outputLines = outputText.split("\n").filter(Boolean);
-          const { lines, truncated } = limitLines(outputLines, MAX_LINES);
-          result.push(...lines.map(l => truncate(l, 65)));
-          if (truncated > 0) result.push(`... ${truncated} more lines`);
-        }
-
-        const stats = hasError ? `exit ${exitCode}` : result.length === 0 ? "done" : undefined;
-        return { lines: result, isError: hasError, stats };
+        const lineCount = stdout ? stdout.split("\n").length : 0;
+        return { summary: lineCount > 0 ? `Done (${lineCount} lines)` : "Done", isError: false, isExpandable: lineCount > 3 };
       }
-
       case "grep": {
         if (Array.isArray(parsed.matches)) {
           const count = parsed.matches.length;
           const files = [...new Set(parsed.matches.map((m: any) => m.file || m.path))];
-          return { lines: [], isError: false, stats: `${count} in ${files.length} files` };
+          return { summary: `Found ${count} matches across ${files.length} files`, isError: false, isExpandable: true };
         }
-        return { lines: [], isError: false, stats: "no matches" };
+        return { summary: "No matches", isError: false, isExpandable: false };
       }
-
       case "glob": {
         if (Array.isArray(parsed.files)) {
-          return { lines: [], isError: false, stats: `${parsed.files.length} files` };
+          return { summary: `Found ${parsed.files.length} files`, isError: false, isExpandable: true };
         }
-        return { lines: [], isError: false };
+        return { summary: "Search complete", isError: false, isExpandable: false };
       }
-
       case "list":
       case "list_directory":
       case "file_tree": {
         const entries = parsed.entries || parsed.files || parsed.items;
         if (Array.isArray(entries)) {
-          const dirs = entries.filter((e: any) => e.type === "directory" || e.isDirectory).length;
-          const files = entries.length - dirs;
-          const parts = [];
-          if (files > 0) parts.push(`${files} files`);
-          if (dirs > 0) parts.push(`${dirs} dirs`);
-          return { lines: [], isError: false, stats: parts.join(", ") || `${entries.length} items` };
+          return { summary: `${entries.length} items`, isError: false, isExpandable: true };
         }
-        return { lines: [], isError: false };
+        return { summary: "Listed", isError: false, isExpandable: false };
       }
-
       case "task": {
-        return { lines: [], isError: false, stats: "done" };
-      }
-
-      default: {
-        if (parsed.message) {
-          return { lines: [truncate(String(parsed.message), 60)], isError: false };
+        const tools = parsed.tools as Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(tools) && tools.length > 0) {
+          return { summary: `Done (${tools.length} tool calls)`, isError: false, isExpandable: true };
         }
+        return { summary: "Done", isError: false, isExpandable: false };
       }
+      default:
+        if (parsed.message) {
+          return { summary: truncate(String(parsed.message), 50), isError: false, isExpandable: false };
+        }
     }
   }
 
-  // Plain text output
-  const textLines = output.split("\n").filter(Boolean);
-  const { lines, truncated } = limitLines(textLines, MAX_LINES);
-  const result = lines.map(l => truncate(l, 65));
-  if (truncated > 0) result.push(`... ${truncated} more lines`);
-  return { lines: result, isError };
-};
+  const lineCount = output.split("\n").filter(Boolean).length;
+  return { summary: lineCount > 0 ? `${lineCount} lines` : "Done", isError, isExpandable: lineCount > 3 };
+}
 
 export const ToolActivity: React.FC<ToolActivityProps> = ({
   tools,
   isStreaming,
   workspaceRoot,
+  isExpanded = false,
 }) => {
   if (tools.length === 0) return null;
 
   return (
     <Box flexDirection="column" marginY={1}>
       {tools.map((tool, idx) => {
-        const display = TOOL_DISPLAY[tool.name] || { label: tool.name, icon: "○", color: "gray" };
+        const display = TOOL_DISPLAY[tool.name] || { label: tool.name, icon: "●", color: "gray" };
         const isRunning = tool.status === "running";
         const isDone = tool.status === "done" || tool.status === "error";
+        const isError = tool.status === "error";
 
-        const { summary, details } = formatToolInput(tool.name, tool.args, workspaceRoot);
-        const { lines: outputLines, isError, stats, diffLines } = isDone
-          ? formatToolOutput(tool.name, tool.output, workspaceRoot)
-          : { lines: [], isError: false, stats: undefined, diffLines: undefined };
+        const inputCall = formatToolInputAsCall(tool.name, tool.args, workspaceRoot);
+        const { summary, isError: isResultError, isExpandable } = isDone
+          ? formatToolResultSummary(tool.name, tool.output)
+          : { summary: "", isError: false, isExpandable: false };
 
-        // Colors that work well in both light and dark terminals
-        const headerColor = isRunning ? "yellow" : isError ? "redBright" : display.color;
+        const iconColor = isRunning ? "yellow" : isError || isResultError ? "redBright" : display.color;
 
         return (
           <Box key={tool.id || idx} flexDirection="column" marginBottom={0}>
-            {/* Header: icon + label + summary + stats */}
-            <Box gap={1}>
+            {/* Header: ● ToolName(input) */}
+            <Box gap={0}>
               {isRunning ? (
                 <Text color="yellow">
                   <Spinner type="dots" />
                 </Text>
               ) : (
-                <Text color={headerColor}>{isError ? figures.cross : display.icon}</Text>
+                <Text color={iconColor}>{display.icon}</Text>
               )}
-              <Text bold color={isRunning ? "yellow" : isError ? "redBright" : "whiteBright"}>
+              <Text> </Text>
+              <Text bold color={isRunning ? "yellow" : isError || isResultError ? "redBright" : "whiteBright"}>
                 {display.label}
               </Text>
-              {summary && (
-                <Text color="gray">{summary}</Text>
-              )}
-              {stats && (
-                <Text color={isError ? "redBright" : "greenBright"}>
-                  {figures.arrowRight} {stats}
-                </Text>
+              {inputCall && (
+                <>
+                  <Text color="gray">(</Text>
+                  <Text color="gray">{inputCall}</Text>
+                  <Text color="gray">)</Text>
+                </>
               )}
             </Box>
 
-            {/* Input details (like bash command) */}
-            {details.length > 0 && (
-              <Box flexDirection="column" paddingLeft={2}>
-                {details.map((line, i) => (
-                  <Text key={`detail-${i}`} color="gray" dimColor>{line}</Text>
-                ))}
-              </Box>
-            )}
-
-            {/* Diff output for edit/write */}
-            {diffLines && diffLines.length > 0 && (
-              <Box flexDirection="column" paddingLeft={2}>
-                {diffLines.map((line, i) => {
-                  const trimmed = line.trimStart();
-                  let lineColor: string = "gray";
-                  if (trimmed.startsWith("+") && !trimmed.startsWith("+++")) lineColor = "greenBright";
-                  else if (trimmed.startsWith("-") && !trimmed.startsWith("---")) lineColor = "redBright";
-                  else if (trimmed.startsWith("@@")) lineColor = "cyanBright";
-                  else if (trimmed.startsWith("...")) lineColor = "gray";
-                  
-                  return (
-                    <Text key={`diff-${i}`} color={lineColor} dimColor={lineColor === "gray"}>
-                      {truncate(line, 70)}
-                    </Text>
-                  );
-                })}
-              </Box>
-            )}
-
-            {/* Output lines (for bash output, errors, etc.) */}
-            {outputLines.length > 0 && !diffLines && (
-              <Box flexDirection="column" paddingLeft={2}>
-                {outputLines.map((line, i) => (
-                  <Text key={`out-${i}`} color={isError ? "redBright" : "gray"} dimColor={!isError}>
-                    {line}
-                  </Text>
-                ))}
+            {/* Detail line: └─ Result summary (ctrl+o to expand) */}
+            {isDone && summary && (
+              <Box paddingLeft={1}>
+                <Text color="gray">└─ </Text>
+                <Text color={isResultError ? "redBright" : "greenBright"}>
+                  {summary}
+                </Text>
+                {isExpandable && !isExpanded && (
+                  <Text color="gray"> (ctrl+o to expand)</Text>
+                )}
               </Box>
             )}
           </Box>

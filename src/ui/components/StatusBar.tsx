@@ -1,3 +1,8 @@
+/**
+ * Status Bar - Clean, minimal status display
+ * Shows current status, thinking indicator, and elapsed time
+ */
+
 import React from "react";
 import { Box, Text } from "ink";
 import figures from "figures";
@@ -16,11 +21,11 @@ interface StatusBarProps {
   themeColors: ThemeColors;
 }
 
-const THINKING_LABELS: Record<ThinkingLevel, string> = {
+const THINKING_ICONS: Record<ThinkingLevel, string> = {
   off: "",
-  low: "Think: Low",
-  medium: "Think: Med",
-  high: "Think: High",
+  low: "◐",
+  medium: "◑",
+  high: "◓",
 };
 
 const StatusBarImpl: React.FC<StatusBarProps> = ({
@@ -34,40 +39,45 @@ const StatusBarImpl: React.FC<StatusBarProps> = ({
   themeColors,
 }) => {
   const statusText = truncate(stripAnsi(status), maxWidth);
-  const thinkingLabel =
-    supportsThinking && thinkingLevel !== "off"
-      ? THINKING_LABELS[thinkingLevel]
-      : "";
+  const showThinking = supportsThinking && thinkingLevel !== "off";
 
   return (
-    <Box paddingX={1} gap={2}>
+    <Box paddingX={1} marginY={0}>
       {isThinking ? (
         <Box gap={1}>
-          <Text color={themeColors.warning}><Spinner type="dots" /></Text>
-          <Text color={themeColors.primary}>{statusText}</Text>
-          <Text color={themeColors.textMuted}>{formatTime(elapsedTime)}</Text>
-          {thinkingLabel && (
-            <Text color={themeColors.secondary}>[{thinkingLabel}]</Text>
+          <Text color={themeColors.warning}>
+            <Spinner type="dots" />
+          </Text>
+          <Text color={themeColors.text} bold>{statusText}</Text>
+          <Text color={themeColors.textMuted}>
+            {formatTime(elapsedTime)}
+          </Text>
+          {showThinking && (
+            <Text color={themeColors.secondary}>
+              {THINKING_ICONS[thinkingLevel]} {thinkingLevel}
+            </Text>
+          )}
+          {cancelCountdown !== null && (
+            <Text color={themeColors.error} bold>
+              ESC again to cancel
+            </Text>
           )}
         </Box>
       ) : (
-        <Box gap={2}>
-          <Text color={themeColors.textMuted}>
-            {figures.bullet} {statusText}
-          </Text>
-          {thinkingLabel && (
-            <Text color={themeColors.secondary}>[{thinkingLabel}]</Text>
+        <Box gap={1}>
+          <Text color={themeColors.success}>{figures.tick}</Text>
+          <Text color={themeColors.textMuted}>{statusText}</Text>
+          {showThinking && (
+            <Text color={themeColors.textDim}>
+              [{thinkingLevel}]
+            </Text>
           )}
         </Box>
-      )}
-      {cancelCountdown !== null && (
-        <Text color={themeColors.error} bold>ESC again to cancel</Text>
       )}
     </Box>
   );
 };
 
-// Memoize StatusBar to prevent unnecessary re-renders
 export const StatusBar = React.memo(
   StatusBarImpl,
   (prev, next) => {

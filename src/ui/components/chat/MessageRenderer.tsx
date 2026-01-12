@@ -17,6 +17,7 @@ export interface MessageRendererProps {
   workingDirectory: string;
   isFirst: boolean;
   themeColors: ThemeColors;
+  expandedTools?: boolean;
 }
 
 interface LineItem {
@@ -108,6 +109,7 @@ const MessageRendererImpl: React.FC<MessageRendererProps> = ({
   workingDirectory,
   isFirst,
   themeColors,
+  expandedTools = false,
 }) => {
   const lines: LineItem[] = [];
 
@@ -219,6 +221,7 @@ const MessageRendererImpl: React.FC<MessageRendererProps> = ({
               groupIdx={pidx}
               workspaceRoot={workingDirectory}
               themeColors={themeColors}
+              expandedTools={expandedTools}
             />
           ),
         });
@@ -227,31 +230,72 @@ const MessageRendererImpl: React.FC<MessageRendererProps> = ({
 
       const part = item.part;
 
-      // Thinking
+      // Thinking/Reasoning - collapsible with nice styling
       if (part.type === "thinking") {
         const content = part.content ?? "";
         if (content.trim()) {
+          // Always show collapsed header, only show content if expandedTools is true
           lines.push({
             key: `${message.id}:think-header:${pidx}`,
             node: (
-              <Text color={themeColors.secondary} bold>
-                {figures.info} reasoning
-              </Text>
+              <Box gap={0}>
+                <Text color={themeColors.secondary}>●</Text>
+                <Text> </Text>
+                <Text color={themeColors.secondary} bold>Thinking</Text>
+                {!expandedTools && (
+                  <Text color={themeColors.textDim}> (ctrl+o to expand)</Text>
+                )}
+              </Box>
             ),
           });
-          wrapText(content, Math.max(10, feedWidth - 4)).forEach((l: string, idx: number) => {
+          
+          // Only show reasoning content when expanded
+          if (expandedTools) {
+            const wrappedLines = wrapText(content, Math.max(10, feedWidth - 6));
+            const maxLines = 15;
+            const displayLines = wrappedLines.slice(0, maxLines);
+            const hasMore = wrappedLines.length > maxLines;
+            
+            displayLines.forEach((l: string, idx: number) => {
+              lines.push({
+                key: `${message.id}:think:${pidx}:${idx}`,
+                node: (
+                  <Box paddingLeft={1}>
+                    <Text color={themeColors.textDim}>│ </Text>
+                    <Text color={themeColors.secondary} italic>
+                      {l}
+                    </Text>
+                  </Box>
+                ),
+              });
+            });
+            
+            if (hasMore) {
+              lines.push({
+                key: `${message.id}:think:${pidx}:more`,
+                node: (
+                  <Box paddingLeft={1}>
+                    <Text color={themeColors.textDim}>
+                      └─ ... {wrappedLines.length - maxLines} more lines
+                    </Text>
+                  </Box>
+                ),
+              });
+            }
+          } else {
+            // Collapsed: show brief preview
+            const preview = content.slice(0, 80).replace(/\n/g, " ");
             lines.push({
-              key: `${message.id}:think:${pidx}:${idx}`,
+              key: `${message.id}:think-preview:${pidx}`,
               node: (
-                <Text>
-                  <Text color={themeColors.secondary} dimColor>│ </Text>
-                  <Text color={themeColors.textDim} dimColor italic>
-                    {l}
+                <Box paddingLeft={1}>
+                  <Text color={themeColors.textDim}>
+                    └─ {preview}{content.length > 80 ? "..." : ""}
                   </Text>
-                </Text>
+                </Box>
               ),
             });
-          });
+          }
         }
         return;
       }
@@ -343,7 +387,8 @@ export const MessageRenderer = React.memo(
       prev.message.isStreaming === next.message.isStreaming &&
       prev.message.parts?.length === next.message.parts?.length &&
       prev.feedWidth === next.feedWidth &&
-      prev.isFirst === next.isFirst
+      prev.isFirst === next.isFirst &&
+      prev.expandedTools === next.expandedTools
     );
   }
 );

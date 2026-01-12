@@ -1,10 +1,11 @@
 /**
  * Chat feed component for displaying messages.
- * Optimized with proper memoization to prevent unnecessary rerenders.
+ * Features a beautiful welcome header and Claude Code style tool display.
  */
 
 import React, { useMemo, useRef, useEffect } from "react";
 import { Box, Text } from "ink";
+import figures from "figures";
 import type { ChatMessage, ThemeColors } from "../types.js";
 import { MessageRenderer } from "./chat/MessageRenderer.js";
 
@@ -16,10 +17,11 @@ export interface ChatFeedProps {
   themeColors: ThemeColors;
   scrollOffset?: number;
   onMaxScrollOffsetChange?: (max: number) => void;
+  expandedTools?: boolean;
+  provider?: string;
+  model?: string;
 }
 
-// Maximum number of completed messages to show in scrollback
-// This prevents flickering when history gets too long
 const MAX_SCROLLBACK_MESSAGES = 50;
 
 const ChatFeedImpl: React.FC<ChatFeedProps> = ({
@@ -30,23 +32,20 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
   themeColors,
   scrollOffset = 0,
   onMaxScrollOffsetChange,
+  expandedTools = false,
+  provider,
+  model,
 }) => {
   const feedWidth = Math.max(20, width - 4);
   
-  // Track previous max scroll offset to prevent unnecessary callback calls
   const prevMaxScrollOffsetRef = useRef<number>(-1);
   const onMaxScrollOffsetChangeRef = useRef(onMaxScrollOffsetChange);
   onMaxScrollOffsetChangeRef.current = onMaxScrollOffsetChange;
 
-  // Filter completed messages. We only render a fixed window of these,
-  // using scrollOffset to page through history.
   const { completedMessages, maxScrollOffset, isAtBottom } = useMemo(() => {
     const completedAll = messages.filter((m) => !m.isStreaming);
     const maxOffset = Math.max(0, completedAll.length - MAX_SCROLLBACK_MESSAGES);
     const clampedOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
-
-    // If offset == 0, we show the newest window.
-    // If offset > 0, we shift the window upwards into history.
     const end = Math.max(0, completedAll.length - clampedOffset);
     const start = Math.max(0, end - MAX_SCROLLBACK_MESSAGES);
     const windowed = completedAll.slice(start, end);
@@ -58,8 +57,6 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
     };
   }, [messages, scrollOffset]);
 
-  // Notify parent of max scroll offset ONLY when it actually changes.
-  // Use ref to avoid re-running effect when callback changes.
   useEffect(() => {
     if (prevMaxScrollOffsetRef.current !== maxScrollOffset) {
       prevMaxScrollOffsetRef.current = maxScrollOffset;
@@ -76,14 +73,63 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
     return undefined;
   }, [messages, streamingMessageProp]);
 
+  // Welcome header when no messages
   if (completedMessages.length === 0 && !streamingMessage) {
+    const dirName = workingDirectory.split("/").pop() || workingDirectory;
+    
     return (
       <Box flexDirection="column" paddingY={1}>
+        {/* Welcome banner - Claude Code style */}
+        <Box 
+          borderStyle="round" 
+          borderColor={themeColors.primary}
+          paddingX={2}
+          paddingY={0}
+          marginBottom={1}
+          flexDirection="column"
+        >
+          <Box justifyContent="space-between">
+            <Box>
+              <Text color={themeColors.primary} bold>ErzenCode</Text>
+              <Text color={themeColors.textMuted}> v0.3.0</Text>
+            </Box>
+            <Box>
+              <Text color={themeColors.success}>Tips for getting started</Text>
+            </Box>
+          </Box>
+          
+          <Box marginTop={0}>
+            <Box flexDirection="column" width="50%">
+              <Text color={themeColors.text} bold>Welcome!</Text>
+              <Text> </Text>
+              <Box>
+                <Text color={themeColors.textMuted}>{figures.pointer} </Text>
+                <Text color={themeColors.info}>{dirName}</Text>
+              </Box>
+              {provider && model && (
+                <Box>
+                  <Text color={themeColors.textMuted}>{figures.tick} </Text>
+                  <Text color={themeColors.warning}>{provider}</Text>
+                  <Text color={themeColors.textMuted}> • </Text>
+                  <Text color={themeColors.success}>{model}</Text>
+                </Box>
+              )}
+            </Box>
+            
+            <Box flexDirection="column" width="50%">
+              <Text color={themeColors.success} bold>Quick Commands</Text>
+              <Text color={themeColors.textMuted}>/help - Show all commands</Text>
+              <Text color={themeColors.textMuted}>/models - Switch model</Text>
+              <Text color={themeColors.textMuted}>/provider - Change provider</Text>
+            </Box>
+          </Box>
+        </Box>
+        
         <Text color={themeColors.textMuted}>
-          Ready in: <Text color={themeColors.primary}>{workingDirectory}</Text>
+          {figures.arrowRight} Type your task and press Enter
         </Text>
-        <Text color={themeColors.textMuted} dimColor>
-          Type a message or /help for commands
+        <Text color={themeColors.textDim}>
+          ? for shortcuts
         </Text>
       </Box>
     );
@@ -92,12 +138,14 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
   return (
     <Box flexDirection="column">
       {!isAtBottom && (
-        <Box>
-          <Text color={themeColors.textMuted} dimColor>
-            Showing earlier messages. Use PgUp/PgDn to scroll.
+        <Box marginBottom={1}>
+          <Text color={themeColors.warning} bold>
+            {figures.arrowUp} Showing earlier messages
           </Text>
+          <Text color={themeColors.textMuted}> (PgUp/PgDn to scroll)</Text>
         </Box>
       )}
+      
       {completedMessages.map((msg, idx) => (
         <Box key={msg.id}>
           <MessageRenderer
@@ -106,9 +154,11 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
             workingDirectory={workingDirectory}
             isFirst={idx === 0}
             themeColors={themeColors}
+            expandedTools={expandedTools}
           />
         </Box>
       ))}
+      
       {isAtBottom && streamingMessage && (
         <Box>
           <MessageRenderer
@@ -117,16 +167,15 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
             workingDirectory={workingDirectory}
             isFirst={completedMessages.length === 0}
             themeColors={themeColors}
+            expandedTools={expandedTools}
           />
         </Box>
       )}
+      
       {!isAtBottom && (
         <Box marginTop={1}>
-          <Text color={themeColors.textMuted} dimColor>
-            PgUp/PgDn scrollback
-          </Text>
-          <Text color={themeColors.textMuted} dimColor>
-            Press PgDn to follow latest output
+          <Text color={themeColors.warning}>
+            {figures.arrowDown} PgDn to follow latest
           </Text>
         </Box>
       )}
@@ -134,18 +183,19 @@ const ChatFeedImpl: React.FC<ChatFeedProps> = ({
   );
 };
 
-// Memoize ChatFeed to prevent unnecessary rerenders
 export const ChatFeed = React.memo(
   ChatFeedImpl,
   (prev, next) => {
-    // Only re-render if significant props change
     return (
       prev.messages === next.messages &&
       prev.streamingMessage === next.streamingMessage &&
       prev.width === next.width &&
       prev.workingDirectory === next.workingDirectory &&
       prev.scrollOffset === next.scrollOffset &&
-      prev.themeColors === next.themeColors
+      prev.themeColors === next.themeColors &&
+      prev.expandedTools === next.expandedTools &&
+      prev.provider === next.provider &&
+      prev.model === next.model
     );
   }
 );

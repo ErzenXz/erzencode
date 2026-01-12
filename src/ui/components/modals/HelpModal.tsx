@@ -78,6 +78,14 @@ export const HelpModal: React.FC<HelpModalProps> = ({ themeColors }) => (
           <Text color={themeColors.text}>Insert newline</Text>
         </Box>
         <Box gap={1}>
+          <Box width={14}><Text color={themeColors.warning} bold>Ctrl+T</Text></Box>
+          <Text color={themeColors.text}>Toggle todo panel</Text>
+        </Box>
+        <Box gap={1}>
+          <Box width={14}><Text color={themeColors.warning} bold>Ctrl+O</Text></Box>
+          <Text color={themeColors.text}>Expand tool outputs</Text>
+        </Box>
+        <Box gap={1}>
           <Box width={14}><Text color={themeColors.warning} bold>Ctrl+C</Text></Box>
           <Text color={themeColors.text}>Exit erzencode</Text>
         </Box>

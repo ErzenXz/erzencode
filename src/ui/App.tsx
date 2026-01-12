@@ -167,6 +167,7 @@ const workingDirectory = useMemo(() => process.cwd(), []);
   const [messageQueue, setMessageQueue] = useState<Array<{ text: string; images: string[] }>>([]);
   const [todos, setTodos] = useState<TodoItem[]>(() => getTodos());
   const [showTodosPanel, setShowTodosPanel] = useState(false);
+  const [expandedTools, setExpandedTools] = useState(false);
 
   useEffect(() => {
     setTodoUpdateCallback((next) => setTodos(next));
@@ -1328,6 +1329,8 @@ const workingDirectory = useMemo(() => process.cwd(), []);
           if (agentStream.status.startsWith("Mode:")) agentStream.setStatus("Ready");
         } else if (action.action === "toggle-todos") {
           setShowTodosPanel((prev) => !prev);
+        } else if (action.action === "toggle-tool-expand") {
+          setExpandedTools((prev) => !prev);
         }
         break;
     }
@@ -1580,6 +1583,9 @@ const workingDirectory = useMemo(() => process.cwd(), []);
           workingDirectory={workingDirectory}
           themeColors={themeColors}
           scrollOffset={scrollOffset}
+          expandedTools={expandedTools}
+          provider={agentConfig.provider}
+          model={agentConfig.model}
         />
         {renderBashApprovalPrompt()}
       </Box>
@@ -1587,16 +1593,21 @@ const workingDirectory = useMemo(() => process.cwd(), []);
       {/* Bottom area - inline selectors, status, input */}
       <Box flexDirection="column">
         {modalState.activeModal !== "none" && renderInlineSelector()}
-        <StatusBar {...statusBarProps} />
-
-        {/* Context + Todo strip (above input) */}
-        <Box paddingX={2} marginBottom={0} justifyContent="space-between">
-          <Text color={themeColors.textMuted} dimColor>
-            Context left: {formatTokens(contextLeft)} ({contextLeftPct}%)
-          </Text>
-          <Text color={themeColors.textMuted} dimColor>
-            {todoSummaryLine ? `${todoSummaryLine} • Ctrl+T` : `Ctrl+T todos`}
-          </Text>
+        
+        {/* Status and context info */}
+        <Box paddingX={1} justifyContent="space-between">
+          <StatusBar {...statusBarProps} />
+          <Box gap={2}>
+            <Text color={themeColors.textDim}>
+              {contextLeftPct}% ctx
+            </Text>
+            {expandedTools && (
+              <Text color={themeColors.info}>expanded</Text>
+            )}
+            <Text color={themeColors.textDim}>
+              {inProgressTodo ? `[>] ${inProgressTodo.id}` : ""}
+            </Text>
+          </Box>
         </Box>
 
         {/* Expanded todo panel */}

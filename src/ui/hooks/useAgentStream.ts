@@ -463,15 +463,20 @@ export function useAgentStream(config: AgentStreamConfig): UseAgentStreamReturn 
               return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
             });
 
+            // Create a new tool object to trigger React re-render (immutable update)
             for (let i = messageParts.length - 1; i >= 0; i--) {
               const p = messageParts[i];
               if (p?.type === "tool" && ((resultToolCallId && p.id === resultToolCallId) || p.status === "running")) {
-                (p as ToolPart).status = "done";
-                if (outputText !== undefined) (p as ToolPart).output = outputText;
+                // Replace with new object to ensure React sees the change
+                messageParts[i] = {
+                  ...p,
+                  status: "done",
+                  output: outputText !== undefined ? outputText : p.output,
+                };
                 break;
               }
             }
-            updateMessage();
+            updateMessage(true); // Force update for tool status changes
             currentTextContent = "";
           }
         }

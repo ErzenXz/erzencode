@@ -1,5 +1,6 @@
 /**
  * Tool group component for rendering multiple tool calls.
+ * Supports expand/collapse with ctrl+o.
  * Optimized with React.memo to prevent unnecessary rerenders.
  */
 
@@ -14,6 +15,7 @@ export interface ToolGroupProps {
   groupIdx: number;
   workspaceRoot?: string;
   themeColors: ThemeColors;
+  expandedTools?: boolean;
 }
 
 const ToolGroupImpl: React.FC<ToolGroupProps> = ({
@@ -22,6 +24,7 @@ const ToolGroupImpl: React.FC<ToolGroupProps> = ({
   groupIdx,
   workspaceRoot,
   themeColors,
+  expandedTools = false,
 }) => {
   return (
     <Box flexDirection="column">
@@ -34,6 +37,7 @@ const ToolGroupImpl: React.FC<ToolGroupProps> = ({
           toolIdx={idx}
           workspaceRoot={workspaceRoot}
           themeColors={themeColors}
+          isExpanded={expandedTools}
         />
       ))}
     </Box>
@@ -44,14 +48,15 @@ const ToolGroupImpl: React.FC<ToolGroupProps> = ({
 export const ToolGroup = React.memo(
   ToolGroupImpl,
   (prev, next) => {
-    // Only re-render if tools array changes
-    return (
-      prev.tools.length === next.tools.length &&
-      prev.tools.every((t, i) => {
-        const nextTool = next.tools[i];
-        return t.name === nextTool.name && t.status === nextTool.status;
-      })
-    );
+    // Only re-render if tools array or expanded state changes
+    if (prev.tools.length !== next.tools.length) return false;
+    if (prev.expandedTools !== next.expandedTools) return false;
+    if (prev.msgId !== next.msgId) return false;
+    
+    return prev.tools.every((t, i) => {
+      const nextTool = next.tools[i];
+      return t.name === nextTool.name && t.status === nextTool.status && t.output === nextTool.output;
+    });
   }
 );
 

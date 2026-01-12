@@ -407,6 +407,11 @@ export function handleKeyboardInput(
     return action("command", "toggle-todos");
   }
 
+  // Ctrl+O - toggle tool output expansion (always available in chat)
+  if (context.stage === "chat" && key.ctrl && inputKey === "o") {
+    return action("command", "toggle-tool-expand");
+  }
+
   // Modal input
   if (context.activeModal !== "none") {
     return handleModalInput(inputKey, key, context.activeModal);
