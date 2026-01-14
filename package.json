@@ -15,7 +15,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "pnpm --filter core build && pnpm --filter erzencode build && pnpm --filter erzencode-vscode build",
+    "build": "pnpm --filter @erzencode/core build && pnpm --filter erzencode build && pnpm --filter erzencode-vscode build",
     "build:core": "pnpm --filter core build",
     "build:cli": "pnpm --filter erzencode build",
     "build:extension": "pnpm --filter erzencode-vscode build",

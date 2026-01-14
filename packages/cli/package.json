@@ -14,7 +14,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "pnpm --filter @erzencode/core build && tsc && vite build",
     "dev": "tsx src/cli.ts",
     "build:web-ui": "vite build",
     "start": "node dist/cli.js",

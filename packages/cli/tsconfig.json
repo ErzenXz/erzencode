@@ -7,7 +7,11 @@
     "baseUrl": ".",
     "paths": {
       "@erzencode/core": ["../core/dist/index.d.ts"],
-      "@erzencode/core/*": ["../core/dist/*"]
+      "@erzencode/core/*": [
+        "../core/dist/*.d.ts",
+        "../core/dist/*/index.d.ts",
+        "../core/dist/*"
+      ]
     }
   },
   "include": [
