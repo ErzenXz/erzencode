@@ -6,18 +6,8 @@
     "composite": true,
     "baseUrl": "./src",
     "paths": {
-      "./ai-agent": ["../core/src/ai-agent"],
-      "./ai-provider": ["../core/src/ai-provider"],
-      "./config": ["../core/src/config"],
-      "./models": ["../core/src/models"],
-      "./prompts": ["../core/src/prompts"],
-      "./subagents": ["../core/src/subagents"],
-      "./themes": ["../core/src/themes"],
-      "./compaction": ["../core/src/compaction"],
-      "./copilot-auth": ["../core/src/copilot-auth"],
-      "./tools-standalone": ["../core/src/tools/tools-standalone"],
-      "./indexer/*": ["../core/src/indexer/*"],
-      "@erzencode/core": ["../core/src"]
+      "@erzencode/core": ["../core/src/index.ts"],
+      "@erzencode/core/*": ["../core/src/*"]
     }
   },
   "include": [
