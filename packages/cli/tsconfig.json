@@ -6,8 +6,8 @@
     "composite": true,
     "baseUrl": ".",
     "paths": {
-      "@erzencode/core": ["../core/src/index.ts"],
-      "@erzencode/core/*": ["../core/src/*"]
+      "@erzencode/core": ["../core/dist/index.d.ts"],
+      "@erzencode/core/*": ["../core/dist/*"]
     }
   },
   "include": [
