@@ -1,0 +1,144 @@
+{
+  "name": "@erzencode/core",
+  "version": "0.3.0",
+  "description": "ErzenCode Core - Shared business logic for CLI and VSCode extension",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ai-agent": {
+      "types": "./dist/ai-agent.d.ts",
+      "default": "./dist/ai-agent.js"
+    },
+    "./ai-provider": {
+      "types": "./dist/ai-provider.d.ts",
+      "default": "./dist/ai-provider.js"
+    },
+    "./ai-middleware": {
+      "types": "./dist/ai-middleware.d.ts",
+      "default": "./dist/ai-middleware.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
+    "./models": {
+      "types": "./dist/models.d.ts",
+      "default": "./dist/models.js"
+    },
+    "./models-api": {
+      "types": "./dist/models-api.d.ts",
+      "default": "./dist/models-api.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts.d.ts",
+      "default": "./dist/prompts.js"
+    },
+    "./themes": {
+      "types": "./dist/themes.d.ts",
+      "default": "./dist/themes.js"
+    },
+    "./compaction": {
+      "types": "./dist/compaction.d.ts",
+      "default": "./dist/compaction.js"
+    },
+    "./copilot-auth": {
+      "types": "./dist/copilot-auth.d.ts",
+      "default": "./dist/copilot-auth.js"
+    },
+    "./subagents": {
+      "types": "./dist/subagents.d.ts",
+      "default": "./dist/subagents.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "default": "./dist/platform/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.js"
+    },
+    "./indexer": {
+      "types": "./dist/indexer/index.d.ts",
+      "default": "./dist/indexer/index.js"
+    },
+    "./indexer/types": {
+      "types": "./dist/indexer/types.d.ts",
+      "default": "./dist/indexer/types.js"
+    },
+    "./shared/result": {
+      "types": "./dist/shared/result.d.ts",
+      "default": "./dist/shared/result.js"
+    },
+    "./ai-agent.js": "./dist/ai-agent.js",
+    "./ai-provider.js": "./dist/ai-provider.js",
+    "./ai-middleware.js": "./dist/ai-middleware.js",
+    "./config.js": "./dist/config.js",
+    "./models.js": "./dist/models.js",
+    "./models-api.js": "./dist/models-api.js",
+    "./prompts.js": "./dist/prompts.js",
+    "./themes.js": "./dist/themes.js",
+    "./compaction.js": "./dist/compaction.js",
+    "./copilot-auth.js": "./dist/copilot-auth.js",
+    "./subagents.js": "./dist/subagents.js",
+    "./types.js": "./dist/types.js",
+    "./platform/index.js": "./dist/platform/index.js",
+    "./tools/index.js": "./dist/tools/index.js",
+    "./indexer/index.js": "./dist/indexer/index.js",
+    "./indexer/types.js": "./dist/indexer/types.js",
+    "./shared/result.js": "./dist/shared/result.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "assistant",
+    "agent",
+    "openai",
+    "anthropic",
+    "claude",
+    "gpt",
+    "llm"
+  ],
+  "author": "Erzen Krasniqi",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.9",
+    "@ai-sdk/google": "^3.0.6",
+    "@ai-sdk/mistral": "^3.0.5",
+    "@ai-sdk/openai": "^3.0.7",
+    "@ai-sdk/openai-compatible": "^2.0.4",
+    "@ai-sdk/xai": "^3.0.13",
+    "@lancedb/lancedb": "^0.23.0",
+    "ai": "^6.0.27",
+    "apache-arrow": "^18.1.0",
+    "diff": "^8.0.2",
+    "ignore": "^7.0.5",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.0.9",
+    "@types/node": "^25.0.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.16"
+  }
+}

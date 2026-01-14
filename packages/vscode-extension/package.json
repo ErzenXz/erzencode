@@ -1,0 +1,351 @@
+{
+  "name": "erzencode-vscode",
+  "displayName": "ErzenCode AI Assistant",
+  "description": "AI-powered coding assistant for VSCode with full feature parity to the CLI",
+  "version": "0.3.0",
+  "type": "module",
+  "publisher": "erzenkrasniqi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ErzenXz/erzencode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ErzenXz/erzencode/issues"
+  },
+  "homepage": "https://github.com/ErzenXz/erzencode#readme",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Tools",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "assistant",
+    "coding",
+    "claude",
+    "gpt",
+    "anthropic",
+    "openai",
+    "pair-programming",
+    "chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "erzencode.openChat",
+        "title": "Open ErzenCode Chat",
+        "category": "ErzenCode",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "erzencode.quickChat",
+        "title": "Quick Chat with ErzenCode",
+        "category": "ErzenCode",
+        "icon": "$(comment-draft)"
+      },
+      {
+        "command": "erzencode.explainCode",
+        "title": "Explain Selected Code",
+        "category": "ErzenCode"
+      },
+      {
+        "command": "erzencode.fixCode",
+        "title": "Fix Selected Code",
+        "category": "ErzenCode"
+      },
+      {
+        "command": "erzencode.newSession",
+        "title": "Start New Session",
+        "category": "ErzenCode"
+      },
+      {
+        "command": "erzencode.openSettings",
+        "title": "Open ErzenCode Settings",
+        "category": "ErzenCode",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "erzencode.setApiKey",
+        "title": "Set API Key",
+        "category": "ErzenCode"
+      },
+      {
+        "command": "erzencode.switchProvider",
+        "title": "Switch AI Provider",
+        "category": "ErzenCode"
+      },
+      {
+        "command": "erzencode.switchModel",
+        "title": "Switch AI Model",
+        "category": "ErzenCode"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "erzencode-sidebar",
+          "title": "ErzenCode",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "erzencode-sidebar": [
+        {
+          "type": "webview",
+          "id": "erzencode.chatView",
+          "name": "Chat",
+          "contextualTitle": "ErzenCode Chat"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "erzencode.quickChat",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e"
+      }
+    ],
+    "configuration": {
+      "title": "ErzenCode AI Assistant",
+      "properties": {
+        "erzencode.apiKeys.anthropic": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key (for Claude models)",
+          "markdownDescription": "API key for Anthropic Claude. Get it at: https://console.anthropic.com/"
+        },
+        "erzencode.apiKeys.openai": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key (for GPT models)",
+          "markdownDescription": "API key for OpenAI GPT models. Get it at: https://platform.openai.com/api-keys"
+        },
+        "erzencode.apiKeys.google": {
+          "type": "string",
+          "default": "",
+          "description": "Google AI API key (for Gemini models)",
+          "markdownDescription": "API key for Google Gemini. Get it at: https://makersuite.google.com/app/apikey"
+        },
+        "erzencode.apiKeys.xai": {
+          "type": "string",
+          "default": "",
+          "description": "xAI API key (for Grok models)",
+          "markdownDescription": "API key for xAI Grok models. Get it at: https://console.x.ai/"
+        },
+        "erzencode.apiKeys.openrouter": {
+          "type": "string",
+          "default": "",
+          "description": "OpenRouter API key (multi-provider API)",
+          "markdownDescription": "API key for OpenRouter. Get it at: https://openrouter.ai/keys"
+        },
+        "erzencode.apiKeys.groq": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API key (fast inference)",
+          "markdownDescription": "API key for Groq. Get it at: https://console.groq.com/keys"
+        },
+        "erzencode.apiKeys.together": {
+          "type": "string",
+          "default": "",
+          "description": "Together AI API key (open source models)",
+          "markdownDescription": "API key for Together AI. Get it at: https://api.together.xyz/settings/api-keys"
+        },
+        "erzencode.apiKeys.fireworks": {
+          "type": "string",
+          "default": "",
+          "description": "Fireworks AI API key (fast inference)",
+          "markdownDescription": "API key for Fireworks AI. Get it at: https://fireworks.ai/account/api-keys"
+        },
+        "erzencode.apiKeys.deepseek": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API key",
+          "markdownDescription": "API key for DeepSeek. Get it at: https://platform.deepseek.com/api_keys"
+        },
+        "erzencode.apiKeys.mistral": {
+          "type": "string",
+          "default": "",
+          "description": "Mistral AI API key",
+          "markdownDescription": "API key for Mistral AI. Get it at: https://console.mistral.ai/api-keys/"
+        },
+        "erzencode.apiKeys.perplexity": {
+          "type": "string",
+          "default": "",
+          "description": "Perplexity API key (search-augmented models)",
+          "markdownDescription": "API key for Perplexity. Get it at: https://www.perplexity.ai/settings/api"
+        },
+        "erzencode.apiKeys.cohere": {
+          "type": "string",
+          "default": "",
+          "description": "Cohere API key (Command models)",
+          "markdownDescription": "API key for Cohere. Get it at: https://dashboard.cohere.com/api-keys"
+        },
+        "erzencode.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "google",
+            "xai",
+            "openrouter",
+            "groq",
+            "together",
+            "fireworks",
+            "deepseek",
+            "mistral",
+            "perplexity",
+            "cohere",
+            "copilot",
+            "ollama",
+            "zai",
+            "zai-coding-plan"
+          ],
+          "default": "anthropic",
+          "description": "AI provider to use",
+          "enumDescriptions": [
+            "Anthropic Claude models (recommended)",
+            "OpenAI GPT models",
+            "Google Gemini models",
+            "xAI Grok models",
+            "OpenRouter - multi-provider API",
+            "Groq - fast inference",
+            "Together AI - open source models",
+            "Fireworks AI - fast inference",
+            "DeepSeek models",
+            "Mistral AI models",
+            "Perplexity - search-augmented models",
+            "Cohere Command models",
+            "GitHub Copilot integration",
+            "Ollama - local models",
+            "z.ai models",
+            "z.ai Coding Plan models"
+          ]
+        },
+        "erzencode.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model ID to use",
+          "markdownDescription": "Model ID to use. Leave empty for the provider's default model.\n\nPopular options:\n- **Anthropic**: `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`\n- **OpenAI**: `gpt-4o`, `gpt-4o-mini`\n- **Google**: `gemini-2.0-flash-exp`\n- **xAI**: `grok-beta`\n- **DeepSeek**: `deepseek-chat`, `deepseek-r1`\n- **Mistral**: `mistral-large-latest`\n- **Ollama**: `llama3.2`, `qwen2.5`"
+        },
+        "erzencode.mode": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "ask",
+            "plan"
+          ],
+          "default": "agent",
+          "description": "Agent operation mode",
+          "enumDescriptions": [
+            "Full agent mode with file operations and command execution",
+            "Ask-only mode for answering questions without making changes",
+            "Planning mode for analysis and planning with todo tracking"
+          ]
+        },
+        "erzencode.thinkingLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "off",
+          "description": "Thinking level for supported models (Claude 3.7+, o1, etc.)",
+          "enumDescriptions": [
+            "No extended thinking",
+            "Low thinking budget (1024 tokens)",
+            "Medium thinking budget (4096 tokens)",
+            "High thinking budget (16384 tokens)"
+          ]
+        },
+        "erzencode.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Custom base URL for API requests (for self-hosted or proxy endpoints)",
+          "markdownDescription": "Custom base URL for API requests. Use this for self-hosted models or proxy endpoints. Example: `https://api.example.com/v1`"
+        },
+        "erzencode.theme": {
+          "type": "string",
+          "enum": [
+            "dark",
+            "light",
+            "auto"
+          ],
+          "default": "auto",
+          "description": "Theme for the chat interface",
+          "enumDescriptions": [
+            "Always use dark theme",
+            "Always use light theme",
+            "Follow VSCode theme"
+          ]
+        },
+        "erzencode.autoSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save chat history"
+        },
+        "erzencode.maxHistorySize": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "Maximum number of messages to keep in history"
+        },
+        "erzencode.compactMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use compact mode for messages (less spacing)"
+        },
+        "erzencode.renderer": {
+          "type": "string",
+          "enum": [
+            "markdown",
+            "raw"
+          ],
+          "default": "markdown",
+          "description": "How to render AI responses",
+          "enumDescriptions": [
+            "Render as formatted markdown with syntax highlighting",
+            "Render as plain text"
+          ]
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc && vite build",
+    "build:ext": "tsc",
+    "build:webview": "vite build",
+    "dev": "tsc --watch",
+    "dev:webview": "vite build --watch",
+    "package": "vsce package",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "@erzencode/core": "workspace:*",
+    "uuid": "^11.0.3"
+  },
+  "devDependencies": {
+    "@erzencode/core": "workspace:*",
+    "@types/react": "^19.0.6",
+    "@types/react-dom": "^19.0.2",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^2.32.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.0"
+  }
+}

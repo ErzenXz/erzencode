@@ -1,6 +1,7 @@
 {
   "name": "erzencode",
   "version": "1.0.0",
+  "private": true,
   "description": "AI-powered coding assistant CLI - Your intelligent pair programming companion",
   "type": "module",
   "main": "./dist/cli.js",
@@ -14,21 +15,25 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "pnpm run clean && tsc && vite build",
-    "dev": "tsx src/cli.ts",
-    "dev:web-ui": "vite",
-    "build:web-ui": "vite build",
-    "start": "node dist/cli.js",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});\"",
-    "link:global": "pnpm build && pnpm link --global",
-    "unlink:global": "pnpm unlink --global erzencode",
+    "build": "pnpm --filter core build && pnpm --filter erzencode build && pnpm --filter erzencode-vscode build",
+    "build:core": "pnpm --filter core build",
+    "build:cli": "pnpm --filter erzencode build",
+    "build:extension": "pnpm --filter erzencode-vscode build",
+    "dev": "pnpm --filter erzencode dev",
+    "dev:extension": "pnpm --filter erzencode-vscode dev",
+    "dev:web-ui": "pnpm --filter erzencode dev:web-ui",
+    "start": "pnpm --filter erzencode start",
+    "clean": "node -e \"require('node:fs').rmSync('packages/*/dist',{recursive:true,force:true});\"",
+    "link:global": "pnpm build && cd packages/cli && pnpm link --global",
+    "unlink:global": "cd packages/cli && pnpm unlink --global",
     "prepublishOnly": "pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "commit": "git-cz",
     "lint:commit": "commitlint --edit",
-    "release": "semantic-release"
+    "release": "semantic-release",
+    "package:extension": "pnpm --filter erzencode-vscode package"
   },
   "repository": {
     "type": "git",

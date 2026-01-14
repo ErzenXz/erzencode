@@ -1,7 +1,9 @@
 packages:
-  - '.'
+  - packages/*
 
 onlyBuiltDependencies:
   - '@makeomatic/ffi-napi'
   - '@makeomatic/ref-napi'
+  - '@vscode/vsce-sign'
   - esbuild
+  - keytar

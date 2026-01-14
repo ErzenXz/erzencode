@@ -1,0 +1,14 @@
+# VSCode ignore file for packaging
+.vscode/**
+.vscode-test/**
+src/**
+tsconfig.json
+**/tsconfig.json
+**/*.ts
+**/*.map
+.gitignore
+**/.gitignore
+**/node_modules/**
+pnpm-lock.yaml
+*.vsix
+**/.git/**

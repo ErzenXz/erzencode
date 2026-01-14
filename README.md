@@ -15,6 +15,7 @@
 - **Multiple AI Providers**: Support for Anthropic, OpenAI, Google, xAI, Mistral, OpenRouter, Groq, DeepSeek, and Ollama
 - **Terminal UI**: Beautiful terminal interface with streaming responses
 - **Web UI**: Browser-based IDE with Monaco editor and terminal
+- **VSCode Extension**: Use ErzenCode directly in VSCode with side panel chat [↗](packages/vscode-extension/)
 - **File Operations**: Read, write, edit, search, and manage files
 - **Shell Integration**: Run commands with approval prompts
 - **Git Support**: View status, diffs, and manage repositories
@@ -23,9 +24,19 @@
 
 ## Install
 
+### CLI
+
 ```bash
 npm install -g erzencode
+pnpm add -g erzencode
+bun add -g erzencode
 ```
+
+### VSCode Extension
+
+1. Download [erzencode-vscode-0.3.0.vsix](packages/vscode-extension/erzencode-vscode-0.3.0.vsix)
+2. Install: `code --install-extension erzencode-vscode-0.3.0.vsix`
+3. Or see [VSCode Extension README](packages/vscode-extension/README.md) for details
 
 ## Quick Start
 
