@@ -4,7 +4,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "baseUrl": "./src",
+    "baseUrl": ".",
     "paths": {
       "@erzencode/core": ["../core/src/index.ts"],
       "@erzencode/core/*": ["../core/src/*"]
