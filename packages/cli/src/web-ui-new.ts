@@ -4,7 +4,7 @@
  */
 
 import http from "node:http";
-import { spawn, exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -20,6 +20,9 @@ import {
   removeBashAllowPrefix,
   getBashApprovalStatus,
   getPendingBashApprovals,
+  getPendingQuestions,
+  answerQuestion,
+  cancelQuestion,
 } from "@erzencode/core/tools";
 import type { ProviderType } from "@erzencode/core/ai-provider";
 import {
@@ -179,7 +182,8 @@ interface TerminalSession {
   name: string;
   cwd: string;
   history: string[];
-  process: any;
+  process: ReturnType<typeof spawn> | null;
+  pending?: Promise<void>;
 }
 
 interface ChatSession {
@@ -248,16 +252,79 @@ function openInBrowser(url: string): void {
   } catch { /* ignore */ }
 }
 
-async function executeCommand(command: string, cwd: string): Promise<{ output: string; error?: string; exitCode?: number }> {
-  return new Promise((resolve) => {
-    exec(command, { cwd, timeout: 60000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        resolve({ output: stdout || "", error: stderr || error.message, exitCode: error.code ?? 1 });
-      } else {
-        resolve({ output: stdout + (stderr ? "\n" + stderr : ""), exitCode: 0 });
-      }
-    });
+function ensureTerminalProcess(terminal: TerminalSession): void {
+  if (terminal.process) return;
+  terminal.process = spawn(process.env.SHELL || "bash", [], {
+    cwd: terminal.cwd,
+    stdio: ["pipe", "pipe", "pipe"],
   });
+}
+
+async function executeCommand(
+  terminal: TerminalSession,
+  command: string
+): Promise<{ output: string; error?: string; exitCode?: number }> {
+  ensureTerminalProcess(terminal);
+  const child = terminal.process!;
+  const marker = `__ERZEN_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  return new Promise((resolve) => {
+    let buffer = "";
+    let resolved = false;
+
+    const onData = (data: Buffer) => {
+      buffer += data.toString();
+      if (!buffer.includes(marker)) return;
+
+      const [before, after] = buffer.split(marker);
+      const exitMatch = (after || "").match(/\s+(\d+)/);
+      const exitCode = exitMatch ? Number.parseInt(exitMatch[1] || "0", 10) : 0;
+
+      cleanup();
+      resolved = true;
+      resolve({ output: before.trim(), exitCode });
+    };
+
+    const onError = (data: Buffer) => {
+      buffer += data.toString();
+      if (!buffer.includes(marker)) return;
+
+      const [before, after] = buffer.split(marker);
+      const exitMatch = (after || "").match(/\s+(\d+)/);
+      const exitCode = exitMatch ? Number.parseInt(exitMatch[1] || "0", 10) : 1;
+
+      cleanup();
+      resolved = true;
+      resolve({ output: before.trim(), error: "Command error", exitCode });
+    };
+
+    const cleanup = () => {
+      child.stdout?.off("data", onData);
+      child.stderr?.off("data", onError);
+    };
+
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onError);
+
+    child.stdin?.write(`${command}\n`);
+    child.stdin?.write(`echo ${marker} $?\n`);
+
+    setTimeout(() => {
+      if (resolved) return;
+      cleanup();
+      resolve({ output: buffer.trim(), error: "Command timed out", exitCode: 124 });
+    }, 120000);
+  });
+}
+
+async function enqueueTerminalCommand(
+  terminal: TerminalSession,
+  command: string
+): Promise<{ output: string; error?: string; exitCode?: number }> {
+  const run = async () => executeCommand(terminal, command);
+  const chained = (terminal.pending ?? Promise.resolve()).then(run, run);
+  terminal.pending = chained.then(() => undefined, () => undefined);
+  return chained;
 }
 
 async function listDirectory(dirPath: string): Promise<Array<{ name: string; type: "file" | "directory"; size?: number }>> {
@@ -976,6 +1043,40 @@ export async function startWebUI(options: {
         return;
       }
 
+      // Terminal management endpoints
+      if (req.method === "POST" && url.pathname === "/api/terminals") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { name?: string; cwd?: string };
+        const terminalId = generateId();
+        const terminalName = body.name?.trim() || `Terminal ${state.terminals.size + 1}`;
+        const cwd = body.cwd ? path.resolve(body.cwd) : state.workspaceRoot;
+        const nextTerminal: TerminalSession = {
+          id: terminalId,
+          name: terminalName,
+          cwd,
+          history: [],
+          process: null,
+        };
+        state.terminals.set(terminalId, nextTerminal);
+        safeJson(res, 200, { terminal: { id: terminalId, name: terminalName, cwd } });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/terminals/delete") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { terminalId?: string };
+        const terminalId = body.terminalId;
+        if (!terminalId || !state.terminals.has(terminalId)) {
+          safeJson(res, 404, { error: "terminal not found" });
+          return;
+        }
+        const terminal = state.terminals.get(terminalId)!;
+        terminal.process?.kill();
+        state.terminals.delete(terminalId);
+        safeJson(res, 200, { ok: true });
+        return;
+      }
+
       // Terminal command endpoint
       if (req.method === "POST" && url.pathname === "/api/terminal") {
         const raw = await readBody(req);
@@ -1000,6 +1101,7 @@ export async function startWebUI(options: {
               if (terminal) {
                 terminal.cwd = resolved;
                 terminal.history.push(`$ ${command}`);
+                await enqueueTerminalCommand(terminal, `cd "${resolved.replace(/"/g, "\\\"")}"`);
               }
               safeJson(res, 200, { output: "", cwd: resolved });
               return;
@@ -1009,13 +1111,68 @@ export async function startWebUI(options: {
           return;
         }
 
-        const result = await executeCommand(command, cwd);
-        if (terminal) {
-          terminal.history.push(`$ ${command}`);
-          if (result.output) terminal.history.push(result.output);
-          if (result.error) terminal.history.push(`Error: ${result.error}`);
+        if (!terminal) {
+          const newTerminalId = generateId();
+          const newTerminal: TerminalSession = {
+            id: newTerminalId,
+            name: "Terminal 1",
+            cwd: state.workspaceRoot,
+            history: [],
+            process: null,
+          };
+          state.terminals.set(newTerminalId, newTerminal);
+          const result = await enqueueTerminalCommand(newTerminal, command);
+          safeJson(res, 200, { ...result, cwd: newTerminal.cwd, terminalId: newTerminalId });
+          return;
         }
-        safeJson(res, 200, { ...result, cwd });
+
+        const result = await enqueueTerminalCommand(terminal, command);
+        terminal.history.push(`$ ${command}`);
+        if (result.output) terminal.history.push(result.output);
+        if (result.error) terminal.history.push(`Error: ${result.error}`);
+        safeJson(res, 200, { ...result, cwd: terminal.cwd, terminalId: terminal.id });
+        return;
+      }
+
+      // Question status
+      if (req.method === "GET" && url.pathname === "/api/questions/status") {
+        const pending = getPendingQuestions();
+        safeJson(res, 200, {
+          pending: pending.map((q) => ({
+            id: q.id,
+            question: q.question,
+            header: q.header,
+            options: q.options,
+            multiple: q.multiple,
+            createdAt: q.createdAt,
+          })),
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/questions/answer") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { questionId?: string; answers?: string[]; customText?: string };
+        const questionId = body.questionId;
+        if (!questionId) {
+          safeJson(res, 400, { error: "questionId required" });
+          return;
+        }
+        const result = answerQuestion(questionId, body.answers ?? [], body.customText);
+        safeJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/questions/cancel") {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as { questionId?: string; reason?: string };
+        const questionId = body.questionId;
+        if (!questionId) {
+          safeJson(res, 400, { error: "questionId required" });
+          return;
+        }
+        const result = cancelQuestion(questionId, body.reason);
+        safeJson(res, result.ok ? 200 : 400, result);
         return;
       }
 

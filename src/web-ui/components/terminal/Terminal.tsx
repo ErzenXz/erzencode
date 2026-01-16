@@ -5,6 +5,9 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ChevronDown, ChevronUp, Plus, X, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useConfig } from "@/hooks/useConfig";
+
+type TerminalTab = { id: string; name: string; cwd: string };
 
 interface TerminalPanelProps {
   className?: string;
@@ -15,7 +18,8 @@ export function TerminalPanel({ className }: TerminalPanelProps) {
   const xtermRef = useRef<XTerm | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
-  const [tabs, setTabs] = useState([{ id: 1, name: "Terminal 1" }]);
+  const [tabs, setTabs] = useState<TerminalTab[]>([]);
+  const { refreshConfig, config } = useConfig();
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -63,7 +67,7 @@ export function TerminalPanel({ className }: TerminalPanelProps) {
 
     // Welcome message
     xterm.writeln("\r\n\x1b[1;35m✨ Erzencode Terminal\x1b[0m\r\n");
-    xterm.writeln("Type 'help' for available commands.\r\n");
+    xterm.writeln("Type commands to run in your workspace.\r\n");
 
     // Store ref
     xtermRef.current = xterm;
@@ -108,12 +112,21 @@ export function TerminalPanel({ className }: TerminalPanelProps) {
 
   const handleCommand = async (command: string, xterm: XTerm) => {
     try {
+      const activeTerminal = tabs[activeTab];
       const response = await fetch("/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ command, terminalId: activeTerminal?.id }),
       });
       const data = await response.json();
+
+      if (data?.cwd && activeTerminal) {
+        setTabs((prev) =>
+          prev.map((t, idx) =>
+            idx === activeTab ? { ...t, cwd: data.cwd } : t
+          )
+        );
+      }
 
       if (data.output) {
         xterm.writeln(data.output);
@@ -126,18 +139,54 @@ export function TerminalPanel({ className }: TerminalPanelProps) {
     }
   };
 
-  const addTab = () => {
-    const newId = tabs.length + 1;
-    setTabs([...tabs, { id: newId, name: `Terminal ${newId}` }]);
-    setActiveTab(tabs.length);
+  const addTab = async () => {
+    try {
+      const response = await fetch("/api/terminals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (data?.terminal) {
+        setTabs((prev) => [...prev, data.terminal]);
+        setActiveTab(tabs.length);
+        return;
+      }
+    } catch {
+      // ignore
+    }
   };
 
-  const removeTab = (id: number) => {
+  const removeTab = async (id: string) => {
     if (tabs.length === 1) return; // Keep at least one tab
+    try {
+      await fetch("/api/terminals/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terminalId: id }),
+      });
+    } catch {
+      // ignore
+    }
     const newTabs = tabs.filter((t) => t.id !== id);
     setTabs(newTabs);
     setActiveTab(Math.min(activeTab, newTabs.length - 1));
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cfg = await refreshConfig();
+      if (cancelled || !cfg?.terminals) return;
+      setTabs(cfg.terminals);
+      setActiveTab(0);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshConfig]);
+
+  const activeTerminal = tabs[activeTab];
 
   return (
     <div
@@ -169,6 +218,11 @@ export function TerminalPanel({ className }: TerminalPanelProps) {
             >
               <TerminalIcon className="h-3 w-3" />
               <span>{tab.name}</span>
+              {activeTerminal?.cwd && activeTab === index && (
+                <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                  {activeTerminal.cwd}
+                </span>
+              )}
               {tabs.length > 1 && (
                 <button
                   className="ml-1 rounded hover:bg-accent"

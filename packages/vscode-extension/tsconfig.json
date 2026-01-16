@@ -12,13 +12,10 @@
     "types": [
       "node"
     ],
-    "baseUrl": ".",
+    "baseUrl": "../..",
     "paths": {
-      "@erzencode/core/*": [
-        "../core/dist/*.d.ts",
-        "../core/dist/*/index.d.ts",
-        "../core/dist/*"
-      ]
+      "@erzencode/core": ["./packages/core/dist"],
+      "@erzencode/core/*": ["./packages/core/dist/*"]
     }
   },
   "include": [

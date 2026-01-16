@@ -36,6 +36,16 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import { Header } from "@/components/layout/Header";
 import { ResizableLayout } from "@/components/layout/ResizableLayout";
@@ -49,6 +59,7 @@ import { TerminalPanel } from "@/components/terminal/Terminal";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 
 import { fileSystemAPI } from "@/lib/file-system";
+import { cn } from "@/lib/utils";
 import { useConfig } from "@/hooks/useConfig";
 import { CommandInput } from "@/components/CommandInput";
 
@@ -82,6 +93,21 @@ type ChatMessage = {
   parts: ChatPart[];
 };
 
+type PendingQuestion = {
+  id: string;
+  question: string;
+  header: string;
+  options: Array<{ label: string; description?: string }>;
+  multiple: boolean;
+  createdAt: number;
+};
+
+type PendingBashApproval = {
+  id: string;
+  command: string;
+  workdir: string;
+};
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -97,6 +123,9 @@ export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingQuestions, setPendingQuestions] = useState<PendingQuestion[]>([]);
+  const [questionSelections, setQuestionSelections] = useState<Record<string, { answers: string[]; customText: string }>>({});
+  const [pendingBashApprovals, setPendingBashApprovals] = useState<PendingBashApproval[]>([]);
 
   // File/Editor state
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
@@ -107,6 +136,101 @@ export function App() {
   const pendingToolsRef = useRef<Map<string, ToolUIPart>>(new Map());
 
   const isVibe = config?.uiMode === "vibe";
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchPending = async () => {
+      try {
+        const [questionRes, bashRes] = await Promise.all([
+          fetch("/api/questions/status"),
+          fetch("/api/bash/status"),
+        ]);
+        if (!questionRes.ok || !bashRes.ok) return;
+        const questionData = await questionRes.json();
+        const bashData = await bashRes.json();
+        if (cancelled) return;
+
+        const nextQuestions = (questionData.pending || []) as PendingQuestion[];
+        setPendingQuestions(nextQuestions);
+        setPendingBashApprovals((bashData.pending || []) as PendingBashApproval[]);
+
+        setQuestionSelections((prev) => {
+          const next = { ...prev };
+          nextQuestions.forEach((q) => {
+            if (!next[q.id]) {
+              next[q.id] = { answers: [], customText: "" };
+            }
+          });
+          return next;
+        });
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    fetchPending();
+    const interval = setInterval(fetchPending, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const toggleQuestionAnswer = (questionId: string, option: string, multiple: boolean) => {
+    setQuestionSelections((prev) => {
+      const existing = prev[questionId] ?? { answers: [], customText: "" };
+      const answers = multiple
+        ? existing.answers.includes(option)
+          ? existing.answers.filter((a) => a !== option)
+          : [...existing.answers, option]
+        : [option];
+      return { ...prev, [questionId]: { ...existing, answers } };
+    });
+  };
+
+  const updateQuestionCustomText = (questionId: string, text: string) => {
+    setQuestionSelections((prev) => {
+      const existing = prev[questionId] ?? { answers: [], customText: "" };
+      return { ...prev, [questionId]: { ...existing, customText: text } };
+    });
+  };
+
+  const submitQuestion = async (questionId: string) => {
+    const selection = questionSelections[questionId] ?? { answers: [], customText: "" };
+    await fetch("/api/questions/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionId,
+        answers: selection.answers,
+        customText: selection.customText.trim() || undefined,
+      }),
+    });
+  };
+
+  const cancelQuestion = async (questionId: string) => {
+    await fetch("/api/questions/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId, reason: "User cancelled" }),
+    });
+  };
+
+  const approveBash = async (approvalId: string) => {
+    await fetch("/api/bash/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approvalId }),
+    });
+  };
+
+  const denyBash = async (approvalId: string) => {
+    await fetch("/api/bash/deny", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approvalId }),
+    });
+  };
 
   // Load messages when session changes
   useEffect(() => {
@@ -483,6 +607,13 @@ export function App() {
     </Conversation>
   );
 
+  const handleCommandSubmit = useCallback(
+    (message: string) => {
+      void handleSubmit({ text: message } as PromptInputMessage);
+    },
+    [handleSubmit]
+  );
+
   const chatPanel = (
     <div className="flex h-full flex-col">
       {/* Chat Header */}
@@ -506,7 +637,7 @@ export function App() {
             <PromptInputBody>
               <CommandInput
                 sessionId={config?.currentSessionId}
-                onSubmit={handleSubmit}
+                onSubmit={handleCommandSubmit}
                 onCommand={handleCommand}
                 disabled={status === "submitted" || status === "streaming"}
                 placeholder={isVibe ? "Describe what you want to build… or /command" : "Ask… or /command"}
@@ -576,6 +707,9 @@ export function App() {
   // Settings modal
   const settingsModal = <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />;
 
+  const questionModalOpen = pendingQuestions.length > 0;
+  const bashModalOpen = pendingBashApprovals.length > 0;
+
   // Web Layout (New)
   const webLayout = (
     <div className="flex h-full">
@@ -633,9 +767,95 @@ export function App() {
       ) : (
         webLayout
       )}
-
-      {/* Settings Modal */}
       {settingsModal}
+      <Dialog open={questionModalOpen} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-[680px]">
+          <DialogHeader>
+            <DialogTitle>Agent Question</DialogTitle>
+            <DialogDescription>
+              Please answer to continue execution.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 max-h-[60vh] overflow-auto">
+            {pendingQuestions.map((q) => {
+              const selection = questionSelections[q.id] ?? { answers: [], customText: "" };
+              return (
+                <div key={q.id} className="rounded-md border border-border p-4 space-y-3">
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">{q.header}</div>
+                    <div className="text-sm font-medium">{q.question}</div>
+                  </div>
+                  <div className="grid gap-2">
+                    {q.options.map((opt) => {
+                      const isSelected = selection.answers.includes(opt.label);
+                      return (
+                        <button
+                          key={opt.label}
+                          onClick={() => toggleQuestionAnswer(q.id, opt.label, q.multiple)}
+                          className={cn(
+                            "rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                            isSelected
+                              ? "border-primary bg-primary/10"
+                              : "border-border hover:bg-accent"
+                          )}
+                        >
+                          <div className="font-medium">{opt.label}</div>
+                          {opt.description && (
+                            <div className="text-xs text-muted-foreground">{opt.description}</div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Other</label>
+                    <Input
+                      value={selection.customText}
+                      onChange={(e) => updateQuestionCustomText(q.id, e.target.value)}
+                      placeholder="Add custom input"
+                    />
+                  </div>
+                  <DialogFooter className="flex flex-row justify-end gap-2">
+                    <Button variant="outline" onClick={() => cancelQuestion(q.id)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={() => submitQuestion(q.id)}>
+                      Submit
+                    </Button>
+                  </DialogFooter>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={bashModalOpen} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Bash Approval Required</DialogTitle>
+            <DialogDescription>
+              Approve or deny the pending shell command.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {pendingBashApprovals.map((pending) => (
+              <div key={pending.id} className="rounded-md border border-border p-4 space-y-3">
+                <div className="text-xs text-muted-foreground">Command</div>
+                <div className="text-sm font-mono break-all">{pending.command}</div>
+                <div className="text-xs text-muted-foreground">Workdir: {pending.workdir}</div>
+                <DialogFooter className="flex flex-row justify-end gap-2">
+                  <Button variant="outline" onClick={() => denyBash(pending.id)}>
+                    Deny
+                  </Button>
+                  <Button onClick={() => approveBash(pending.id)}>
+                    Approve once
+                  </Button>
+                </DialogFooter>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

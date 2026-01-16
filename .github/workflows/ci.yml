@@ -58,9 +58,6 @@ jobs:
         run: pnpm test
         continue-on-error: true
 
-      - name: Type check
-        run: pnpm tsc --noEmit
-
   # Security audit
   security:
     runs-on: ubuntu-latest

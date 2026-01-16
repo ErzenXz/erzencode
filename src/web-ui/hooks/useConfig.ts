@@ -20,6 +20,7 @@ export type UIConfig = {
   maxTokens?: number;
   currentSessionId: string;
   sessions: Array<{ id: string; name: string; workspaceRoot: string; createdAt: number }>;
+  terminals?: Array<{ id: string; name: string; cwd: string }>;
 };
 
 export type ProviderInfo = {

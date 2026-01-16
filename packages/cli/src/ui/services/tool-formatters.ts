@@ -8,7 +8,7 @@ import { TOOL_DISPLAY, type ToolDisplayConfig } from "../types/tools.js";
 /**
  * Maximum number of output lines to display.
  */
-const MAX_OUTPUT_LINES = 10;
+const MAX_OUTPUT_LINES = 6;
 
 /**
  * Formatted output from a tool execution.

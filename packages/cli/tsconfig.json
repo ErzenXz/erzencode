@@ -4,14 +4,10 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "baseUrl": ".",
+    "baseUrl": "../..",
     "paths": {
-      "@erzencode/core": ["../core/dist/index.d.ts"],
-      "@erzencode/core/*": [
-        "../core/dist/*.d.ts",
-        "../core/dist/*/index.d.ts",
-        "../core/dist/*"
-      ]
+      "@erzencode/core": ["./packages/core/dist"],
+      "@erzencode/core/*": ["./packages/core/dist/*"]
     }
   },
   "include": [
