@@ -4,13 +4,21 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@erzencode/core/*": ["../core/src/*"]
+      "@erzencode/core/*": [
+        "../core/dist/*.d.ts",
+        "../core/dist/*/index.d.ts",
+        "../core/dist/*"
+      ]
     }
   },
   "include": [
@@ -22,6 +30,8 @@
     "src/webview/settings"
   ],
   "references": [
-    { "path": "../core" }
+    {
+      "path": "../core"
+    }
   ]
 }
