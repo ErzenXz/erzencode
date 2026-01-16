@@ -5,6 +5,64 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      ".": [
+        "./dist/index.d.ts"
+      ],
+      "ai-agent": [
+        "./dist/ai-agent.d.ts"
+      ],
+      "ai-provider": [
+        "./dist/ai-provider.d.ts"
+      ],
+      "ai-middleware": [
+        "./dist/ai-middleware.d.ts"
+      ],
+      "config": [
+        "./dist/config.d.ts"
+      ],
+      "models": [
+        "./dist/models.d.ts"
+      ],
+      "models-api": [
+        "./dist/models-api.d.ts"
+      ],
+      "prompts": [
+        "./dist/prompts.d.ts"
+      ],
+      "themes": [
+        "./dist/themes.d.ts"
+      ],
+      "compaction": [
+        "./dist/compaction.d.ts"
+      ],
+      "copilot-auth": [
+        "./dist/copilot-auth.d.ts"
+      ],
+      "subagents": [
+        "./dist/subagents.d.ts"
+      ],
+      "types": [
+        "./dist/types.d.ts"
+      ],
+      "platform": [
+        "./dist/platform/index.d.ts"
+      ],
+      "tools": [
+        "./dist/tools/index.d.ts"
+      ],
+      "indexer": [
+        "./dist/indexer/index.d.ts"
+      ],
+      "indexer/types": [
+        "./dist/indexer/types.d.ts"
+      ],
+      "shared/result": [
+        "./dist/shared/result.d.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

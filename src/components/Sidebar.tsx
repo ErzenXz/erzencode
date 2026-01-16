@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import figures from "figures";
-import type { TodoItem } from "../tools-standalone.js";
+import type { TodoItem } from "@erzencode/core/tools";
 
 interface FileInfo {
   path: string;

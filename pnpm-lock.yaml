@@ -26,6 +26,9 @@ importers:
       '@ai-sdk/xai':
         specifier: ^3.0.13
         version: 3.0.13(zod@4.3.5)
+      '@erzencode/core':
+        specifier: workspace:*
+        version: link:packages/core
       '@lancedb/lancedb':
         specifier: ^0.23.0
         version: 0.23.0(apache-arrow@18.1.0)
