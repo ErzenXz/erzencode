@@ -6,8 +6,24 @@
     "composite": true,
     "baseUrl": "../..",
     "paths": {
-      "@erzencode/core": ["./packages/core/dist"],
-      "@erzencode/core/*": ["./packages/core/dist/*"]
+      "@erzencode/core": ["./packages/core/dist/index.d.ts"],
+      "@erzencode/core/ai-agent": ["./packages/core/dist/ai-agent.d.ts"],
+      "@erzencode/core/ai-provider": ["./packages/core/dist/ai-provider.d.ts"],
+      "@erzencode/core/ai-middleware": ["./packages/core/dist/ai-middleware.d.ts"],
+      "@erzencode/core/config": ["./packages/core/dist/config.d.ts"],
+      "@erzencode/core/models": ["./packages/core/dist/models.d.ts"],
+      "@erzencode/core/models-api": ["./packages/core/dist/models-api.d.ts"],
+      "@erzencode/core/prompts": ["./packages/core/dist/prompts.d.ts"],
+      "@erzencode/core/themes": ["./packages/core/dist/themes.d.ts"],
+      "@erzencode/core/compaction": ["./packages/core/dist/compaction.d.ts"],
+      "@erzencode/core/copilot-auth": ["./packages/core/dist/copilot-auth.d.ts"],
+      "@erzencode/core/subagents": ["./packages/core/dist/subagents.d.ts"],
+      "@erzencode/core/types": ["./packages/core/dist/types.d.ts"],
+      "@erzencode/core/platform": ["./packages/core/dist/platform/index.d.ts"],
+      "@erzencode/core/tools": ["./packages/core/dist/tools/index.d.ts"],
+      "@erzencode/core/indexer": ["./packages/core/dist/indexer/index.d.ts"],
+      "@erzencode/core/indexer/types": ["./packages/core/dist/indexer/types.d.ts"],
+      "@erzencode/core/shared/result": ["./packages/core/dist/shared/result.d.ts"]
     }
   },
   "include": [
